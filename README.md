@@ -42,6 +42,7 @@ npm run gen-seed            # generates a 24-word seed
 cp .env.example .env        # then paste the seed into WDK_SEED
 npm run build               # esbuild bundles WDK (see "Build step" below)
 npm run doctor              # sanity-check platform, deps, env, model
+npm run smoke               # non-interactive end-to-end check (wallet + model + dry-run)
 npm start                   # loads the local model + wallet, opens the prompt
 ```
 
@@ -91,6 +92,17 @@ node scripts/fetch-model.mjs <gguf-url>   # downloads into ./models
 ## Upgrade path (bigger agent)
 
 v0 uses a model-agnostic JSON-action protocol so it works even on a 360M dev model. On a capable model you can swap `src/tools.mjs` for either QVAC's **native tool-calling** (`completion({ tools:[…] })`) or the official **[`@tetherto/wdk-mcp-toolkit`](https://www.npmjs.com/package/@tetherto/wdk-mcp-toolkit)** MCP server (35 wallet tools — balance/send/swap/bridge/lending), which plugs straight into QVAC via `completion({ mcp:[…] })`. Register Monad with `server.registerWallet("monad", WalletManagerEvm, { provider })`.
+
+## Verified
+
+Smoke-tested on Linux arm64 (CPU) with SmolLM2-360M in dry-run: WDK derives its Safe
+account and reads balances from Monad testnet; QVAC loads the local model (~1.8s) and
+turns "send 0.05 MON to 0x…" into a JSON action that runs as a dry-run send. See
+[BUILD_LOG.md](./BUILD_LOG.md) for the failures hit along the way and their fixes.
+
+**Known limitation:** QVAC's worker inherits `stdin`, so the interactive REPL only
+handles reliably-typed TTY input — piped/scripted stdin is flaky. For automation use
+`npm run smoke` (no readline). Verify interactive use on your Mac.
 
 ## Layout
 

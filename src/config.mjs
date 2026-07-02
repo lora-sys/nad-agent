@@ -57,6 +57,9 @@ export const config = {
     name: process.env.QVAC_MODEL || "SMOLLM2_360M_INST_Q8",
     localPath: process.env.QVAC_MODEL_PATH || "",
     ctxSize: Number(process.env.QVAC_CTX_SIZE || 8192),
+    // Cap generated tokens so a rambling small model can't run into a context
+    // overflow. Also keeps action-routing snappy. -1 would mean "unbounded".
+    maxTokens: Number(process.env.QVAC_MAX_TOKENS || 256),
   },
   hasPimlicoKey: !!pimlicoKey,
 };

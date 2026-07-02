@@ -39,7 +39,15 @@ export async function loadBrain(onProgress) {
   const { loadModel } = await qvac();
   const src = await resolveModelSrc();
   modelId = await loadModel(
-    { ...src, modelConfig: { ctx_size: config.model.ctxSize }, onProgress },
+    {
+      ...src,
+      modelConfig: {
+        ctx_size: config.model.ctxSize,
+        predict: config.model.maxTokens, // cap generation (llama.cpp n_predict)
+        temp: 0, // deterministic action routing
+      },
+      onProgress,
+    },
     { timeout: 600_000 } // registry fetch of a big model can take minutes on first run
   );
   return modelId;
@@ -50,9 +58,15 @@ export async function complete(history, onToken) {
   const { completion } = await qvac();
   const run = completion({ modelId, history, stream: true }, { timeout: 300_000 });
   let out = "";
-  for await (const token of run.tokenStream) {
-    out += token;
-    if (onToken) onToken(token);
+  try {
+    for await (const token of run.tokenStream) {
+      out += token;
+      if (onToken) onToken(token);
+    }
+  } catch (err) {
+    // A model-side error (e.g. CONTEXT_OVERFLOW) must not crash the agent — keep
+    // whatever was produced and let the caller decide what to do with it.
+    if (onToken) onToken(`\n[model stopped: ${err.code || err.message}]`);
   }
   return out;
 }

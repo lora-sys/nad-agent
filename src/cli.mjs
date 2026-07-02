@@ -13,6 +13,11 @@
 
 import { createInterface } from "node:readline/promises";
 import { stdin, stdout } from "node:process";
+
+// Created in main() AFTER the model loads. QVAC spawns a Bare worker that inherits
+// fd 0/1, and a readline built before that would swallow buffered input during the
+// (multi-second) model load, so we defer it until the prompt is actually ready.
+let rl;
 import { config, describeConfig } from "./config.mjs";
 import * as wallet from "./wallet.mjs";
 import * as brain from "./agent.mjs";
@@ -24,8 +29,6 @@ import {
   describeAction,
   isWrite,
 } from "./tools.mjs";
-
-const rl = createInterface({ input: stdin, output: stdout });
 
 function banner() {
   console.log("\n╭─ nad-agent ───────────────────────────────────────────────╮");
@@ -103,7 +106,7 @@ async function main() {
     }
   } catch (err) {
     console.log(`FAILED\n  ${err.message}\n`);
-    rl.close();
+    rl?.close();
     process.exit(1);
   }
 
@@ -121,10 +124,24 @@ async function main() {
 
   console.log("\ntype /help for commands, or just talk to it. Ctrl-C to quit.\n");
 
+  // Create readline now — after the model load — so it doesn't discard buffered input.
+  rl = createInterface({ input: stdin, output: stdout });
+
   const history = [{ role: "system", content: systemPrompt() }];
 
+  let closed = false;
+  rl.on("close", () => {
+    closed = true;
+  });
+
   for (;;) {
-    const line = (await rl.question("› ")).trim();
+    if (closed) break;
+    let line;
+    try {
+      line = (await rl.question("› ")).trim();
+    } catch {
+      break; // readline closed (Ctrl-D / EOF / piped input ended)
+    }
     if (!line) continue;
 
     if (line.startsWith("/")) {

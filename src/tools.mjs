@@ -34,17 +34,23 @@ export function systemPrompt() {
   );
 }
 
-/** Extract the first {...} JSON object from a model response. */
+/** Extract an action from a model response: JSON first, then a lenient fallback. */
 export function parseAction(text) {
   const m = text.match(/\{[\s\S]*?\}/);
-  if (!m) return { action: "none" };
-  try {
-    const obj = JSON.parse(m[0]);
-    if (!obj.action || !ACTIONS[obj.action]) return { action: "none" };
-    return obj;
-  } catch {
-    return { action: "none" };
+  if (m) {
+    try {
+      const obj = JSON.parse(m[0]);
+      if (obj.action && ACTIONS[obj.action]) return obj;
+    } catch {
+      /* fall through to the lenient path */
+    }
   }
+  // Small models often emit `get_balance()` instead of JSON. Recognize a READ-ONLY
+  // action name in the text — but never auto-trigger a write (send needs real args).
+  for (const name of ["get_balance", "get_address"]) {
+    if (new RegExp(`\\b${name}\\b`).test(text)) return { action: name };
+  }
+  return { action: "none" };
 }
 
 /** True if the action mutates chain state and should require confirmation. */

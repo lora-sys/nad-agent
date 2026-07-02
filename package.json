@@ -13,19 +13,17 @@
     "fetch-model": "node scripts/fetch-model.mjs",
     "build": "node scripts/build.mjs",
     "start": "node --env-file-if-exists=.env dist/cli.mjs",
+    "smoke": "node --env-file-if-exists=.env dist/e2e.mjs",
     "dev": "node scripts/build.mjs && node --env-file-if-exists=.env dist/cli.mjs"
   },
   "dependencies": {
     "@qvac/sdk": "^0.14.1",
     "@tetherto/wdk": "1.0.0-beta.12",
     "@tetherto/wdk-wallet-evm-erc-4337": "1.0.0-beta.9",
-    "ethers": "^6.16.0",
-    "sodium-javascript": "^0.8.0"
+    "ethers": "^6.16.0"
   },
   "devDependencies": {
-    "esbuild": "^0.24.0"
-  },
-  "overrides": {
-    "sodium-native": "npm:sodium-javascript@0.8.0"
+    "esbuild": "^0.24.0",
+    "sodium-javascript": "^0.8.0"
   }
 }
