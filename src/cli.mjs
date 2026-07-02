@@ -1,0 +1,162 @@
+/**
+ * nad-agent CLI — a local AI agent that holds a gasless WDK wallet on Monad.
+ *
+ * Flow:  you type  ->  QVAC (local model) picks a wallet action  ->  you confirm
+ *        writes  ->  WDK executes on Monad (gasless via Pimlico, or dry-run).
+ *
+ * Reliable slash-commands bypass the model entirely:
+ *   /address           show the agent's wallet address
+ *   /balance           show MON balance
+ *   /send <to> <mon>   send MON (asks for confirmation)
+ *   /config /help /exit
+ */
+
+import { createInterface } from "node:readline/promises";
+import { stdin, stdout } from "node:process";
+import { config, describeConfig } from "./config.mjs";
+import * as wallet from "./wallet.mjs";
+import * as brain from "./agent.mjs";
+import {
+  ACTIONS,
+  systemPrompt,
+  parseAction,
+  runAction,
+  describeAction,
+  isWrite,
+} from "./tools.mjs";
+
+const rl = createInterface({ input: stdin, output: stdout });
+
+function banner() {
+  console.log("\n╭─ nad-agent ───────────────────────────────────────────────╮");
+  console.log("│  local AI agent · self-custodial WDK wallet · Monad        │");
+  console.log("╰────────────────────────────────────────────────────────────╯");
+  console.log(describeConfig());
+  console.log("");
+}
+
+async function confirm(question) {
+  const ans = (await rl.question(`${question} [y/N] `)).trim().toLowerCase();
+  return ans === "y" || ans === "yes";
+}
+
+/** Execute a parsed action, confirming writes. Returns nothing (prints results). */
+async function handleAction(action) {
+  if (action.action === "none") return false;
+  if (isWrite(action.action)) {
+    console.log(`\n  ${describeAction(action)}`);
+    if (!(await confirm("  Confirm?"))) {
+      console.log("  cancelled.\n");
+      return true;
+    }
+  }
+  try {
+    const out = await runAction(action);
+    if (out != null) console.log(`  ${out.replace(/\n/g, "\n  ")}\n`);
+  } catch (err) {
+    console.log(`  error: ${err.message}\n`);
+  }
+  return true;
+}
+
+async function handleSlash(line) {
+  const [cmd, ...rest] = line.slice(1).trim().split(/\s+/);
+  switch (cmd) {
+    case "address":
+      return handleAction({ action: "get_address" });
+    case "balance":
+      return handleAction({ action: "get_balance" });
+    case "send":
+      return handleAction({ action: "send_mon", to: rest[0], amountMon: rest[1] });
+    case "config":
+      console.log(describeConfig(), "\n");
+      return true;
+    case "help":
+      console.log(
+        "  /address · /balance · /send <to> <mon> · /config · /exit\n" +
+          "  or just type naturally: \"send 0.1 MON to 0x...\", \"what's my balance?\"\n"
+      );
+      return true;
+    case "exit":
+    case "quit":
+      return "exit";
+    default:
+      console.log(`  unknown command: /${cmd} (try /help)\n`);
+      return true;
+  }
+}
+
+async function main() {
+  banner();
+
+  // 1) Wallet — reads work with just an RPC; writes need Pimlico (else dry-run).
+  process.stdout.write("initializing wallet… ");
+  try {
+    const addr = await wallet.initWallet();
+    console.log(`ok\n  address: ${addr}`);
+    try {
+      const bal = await wallet.getBalance();
+      const { formatMon } = await import("./format.mjs");
+      console.log(`  balance: ${formatMon(bal)} ${config.chain.symbol}`);
+    } catch {
+      /* balance read is best-effort at startup */
+    }
+  } catch (err) {
+    console.log(`FAILED\n  ${err.message}\n`);
+    rl.close();
+    process.exit(1);
+  }
+
+  // 2) Local brain — load the model into memory.
+  process.stdout.write(`loading local model (${config.model.localPath || config.model.name})… `);
+  const t0 = process.hrtime.bigint();
+  try {
+    await brain.loadBrain();
+    const secs = Number(process.hrtime.bigint() - t0) / 1e9;
+    console.log(`ok (${secs.toFixed(1)}s)`);
+  } catch (err) {
+    console.log(`FAILED\n  ${err.message}`);
+    console.log("  (you can still use slash-commands; NL requests need the model)\n");
+  }
+
+  console.log("\ntype /help for commands, or just talk to it. Ctrl-C to quit.\n");
+
+  const history = [{ role: "system", content: systemPrompt() }];
+
+  for (;;) {
+    const line = (await rl.question("› ")).trim();
+    if (!line) continue;
+
+    if (line.startsWith("/")) {
+      const r = await handleSlash(line);
+      if (r === "exit") break;
+      continue;
+    }
+
+    // Natural language -> ask the local model for an action.
+    history.push({ role: "user", content: line });
+    process.stdout.write("  ");
+    let raw = "";
+    try {
+      raw = await brain.complete(history, (t) => process.stdout.write(t));
+      process.stdout.write("\n");
+    } catch (err) {
+      console.log(`  model error: ${err.message}\n`);
+      continue;
+    }
+    history.push({ role: "assistant", content: raw });
+
+    const action = parseAction(raw);
+    const handled = await handleAction(action);
+    if (!handled) console.log(""); // model chose to just chat; its text already streamed
+  }
+
+  await brain.unloadBrain().catch(() => {});
+  wallet.dispose();
+  rl.close();
+}
+
+main().catch((err) => {
+  console.error(err);
+  process.exit(1);
+});

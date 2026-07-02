@@ -1,0 +1,104 @@
+# nad-agent
+
+**A 100% local AI agent with its own gasless, self-custodial wallet on Monad — powered end-to-end by Tether's stack (QVAC + WDK).**
+
+No cloud. No API keys for the model. No gas for the user. You type in natural language, a model running *on your machine* decides what to do, you confirm, and the transaction settles on Monad — sponsored by a paymaster so the wallet pays zero gas.
+
+```
+you ──▶ QVAC (local LLM, on-device) ──▶ picks a wallet action ──▶ you confirm
+                                                                      │
+                                            WDK smart account (ERC-4337, Safe) ──▶ Monad
+                                                                      │
+                                              Pimlico bundler + paymaster (gasless)
+```
+
+- **Brain:** [QVAC](https://qvac.tether.io) runs a GGUF model fully on-device (CPU, or Metal on Apple Silicon).
+- **Wallet:** [WDK](https://tether.io) derives a self-custodial Safe ERC-4337 account; the key never leaves the machine.
+- **Chain:** Monad (EVM-equivalent) — fast, cheap settlement. Gasless via Pimlico.
+
+---
+
+## Develop on one machine, run on another
+
+This is the intended workflow, and it works because **code travels via git while native dependencies do not**:
+
+| What | In git? | Why |
+|------|:------:|-----|
+| Source (`src/`, `scripts/`) | ✅ | Platform-independent |
+| `node_modules/` (incl. QVAC's native engine) | ❌ | Each machine runs `npm install` → gets its own prebuild (CPU vs Metal) |
+| `.env` | ❌ | Model, keys, gas mode differ per machine (commit only `.env.example`) |
+| Model weights (`.gguf`) | ❌ | Downloaded per machine |
+
+So: edit + commit on your dev box (tiny CPU model, dry-run sends), `git push`; then on your Mac `git pull && npm install` (grabs the Metal build) and run the big model with real gasless sends. **Same code, different env vars.**
+
+---
+
+## Run it (on your Mac — the real deal)
+
+```bash
+git clone <this repo> && cd nad-agent
+npm install                 # pulls the darwin-arm64 (Metal) QVAC prebuild
+npm run gen-seed            # generates a 24-word seed
+cp .env.example .env        # then paste the seed into WDK_SEED
+npm run build               # esbuild bundles WDK (see "Build step" below)
+npm run doctor              # sanity-check platform, deps, env, model
+npm start                   # loads the local model + wallet, opens the prompt
+```
+
+Recommended `.env` on an M4 Max (36 GB):
+
+```ini
+WDK_SEED="…24 words…"
+MONAD_NETWORK=testnet
+QVAC_MODEL=GPT_OSS_20B_INST_Q4_K_M    # reliable tool-calling needs ~14B+; fits 36GB w/ Metal
+QVAC_CTX_SIZE=8192
+# PIMLICO_API_KEY=…                   # leave blank to dry-run; set to broadcast real txs
+# PIMLICO_SPONSORSHIP_POLICY_ID=sp_…  # set for truly gasless (wallet pays 0)
+```
+
+Then talk to it:
+
+```
+› what's my address?
+› what's my balance?
+› send 0.1 MON to 0xABCD…            # asks you to confirm, then broadcasts (or dry-runs)
+```
+
+Or use the reliable slash-commands (no model needed): `/address` `/balance` `/send <to> <mon>` `/config` `/help` `/exit`.
+
+---
+
+## Gasless vs dry-run (no key needed to start)
+
+- **No `PIMLICO_API_KEY`** → **dry-run**: the full loop runs (model → action → confirm) and sends are *simulated*. Reads (address, balance) are real. Perfect for building before your key lands.
+- **`PIMLICO_API_KEY` set** → sends broadcast for real via ERC-4337. Add a **`PIMLICO_SPONSORSHIP_POLICY_ID`** to make them **gasless** (the paymaster funds gas). Get both at <https://dashboard.pimlico.io>.
+
+Flipping between these is a one-line `.env` change — no code change.
+
+## Build step
+
+`npm run build` (esbuild) exists for one reason: WDK internally uses a *named* import from a CommonJS module (`sodium-universal`), which Node's plain ESM loader rejects. esbuild rewrites it, and the `sodium-native → sodium-javascript` override in `package.json` keeps the crypto path pure-JS (no native build). QVAC stays external and loads its per-platform prebuild at runtime.
+
+## On a slow/CI dev box
+
+QVAC's P2P registry has a hard 60s download timeout that a slow host can't beat for a big model. Work around it by fetching the GGUF over HTTPS and pointing at it directly:
+
+```bash
+node scripts/fetch-model.mjs <gguf-url>   # downloads into ./models
+# then set QVAC_MODEL_PATH=/abs/path/to/model.gguf in .env
+```
+
+## Upgrade path (bigger agent)
+
+v0 uses a model-agnostic JSON-action protocol so it works even on a 360M dev model. On a capable model you can swap `src/tools.mjs` for either QVAC's **native tool-calling** (`completion({ tools:[…] })`) or the official **[`@tetherto/wdk-mcp-toolkit`](https://www.npmjs.com/package/@tetherto/wdk-mcp-toolkit)** MCP server (35 wallet tools — balance/send/swap/bridge/lending), which plugs straight into QVAC via `completion({ mcp:[…] })`. Register Monad with `server.registerWallet("monad", WalletManagerEvm, { provider })`.
+
+## Layout
+
+```
+src/config.mjs   env → resolved config (the only machine-specific behavior)
+src/wallet.mjs   WDK Safe ERC-4337 account on Monad (+ dry-run)
+src/agent.mjs    QVAC local model: load / stream / unload
+src/tools.mjs    wallet actions + NL→action interpreter
+src/cli.mjs      the REPL
+scripts/         doctor · gen-seed · fetch-model · build
+```
