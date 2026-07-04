@@ -54,7 +54,7 @@ export const config = {
     : "",
   seed: process.env.WDK_SEED || "",
   model: {
-    name: process.env.QVAC_MODEL || "SMOLLM2_360M_INST_Q8",
+    name: process.env.QVAC_MODEL || "QWEN3_8B_INST_Q4_K_M",
     localPath: process.env.QVAC_MODEL_PATH || "",
     ctxSize: Number(process.env.QVAC_CTX_SIZE || 8192),
     // Cap generated tokens so a rambling small model can't run into a context

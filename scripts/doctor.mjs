@@ -44,7 +44,7 @@ else warn("PIMLICO_API_KEY not set — will run in DRY-RUN (sends simulated)");
 
 // Model
 console.log("\nmodel:");
-const model = process.env.QVAC_MODEL_PATH || process.env.QVAC_MODEL || "SMOLLM2_360M_INST_Q8";
+const model = process.env.QVAC_MODEL_PATH || process.env.QVAC_MODEL || "QWEN3_8B_INST_Q4_K_M";
 if (process.env.QVAC_MODEL_PATH) {
   existsSync(process.env.QVAC_MODEL_PATH)
     ? ok(`local GGUF: ${process.env.QVAC_MODEL_PATH}`)
