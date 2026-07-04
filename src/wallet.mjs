@@ -67,7 +67,7 @@ export async function quoteSend(to, valueWei) {
 
 /**
  * Broadcast (or, in dry-run, simulate) a native MON transfer.
- * Returns { dryRun } | { hash, fee }.
+ * Returns { dryRun } | { userOpHash, hash, fee }.
  */
 export async function send(to, valueWei) {
   if (!account) throw new Error("Wallet not initialized");
@@ -83,7 +83,28 @@ export async function send(to, valueWei) {
     return { dryRun: true, to, value: valueWei, fee };
   }
   const res = await account.sendTransaction({ to, value: valueWei });
-  return { hash: res.hash, fee: BigInt(res.fee ?? 0) };
+  // IMPORTANT: res.hash is the ERC-4337 *userOpHash*, NOT an on-chain tx hash. The
+  // bundler wraps the UserOperation into a real transaction; the actual tx hash only
+  // exists once it's mined. Resolve it from the userOp receipt so the explorer link
+  // points at a real transaction instead of an unresolvable userOpHash.
+  const userOpHash = res.hash;
+  const hash = await waitForUserOpTxHash(userOpHash);
+  return { userOpHash, hash, fee: BigInt(res.fee ?? 0) };
+}
+
+/** Poll the bundler for the UserOperation receipt; return the on-chain tx hash (or null). */
+async function waitForUserOpTxHash(userOpHash, { tries = 40, delayMs = 1500 } = {}) {
+  for (let i = 0; i < tries; i++) {
+    try {
+      const r = await account.getUserOperationReceipt(userOpHash);
+      const h = r?.receipt?.transactionHash ?? r?.transactionHash;
+      if (h) return h;
+    } catch {
+      /* not indexed yet / transient bundler error — keep polling */
+    }
+    await new Promise((resolve) => setTimeout(resolve, delayMs));
+  }
+  return null; // not included within the window; caller falls back to the userOpHash
 }
 
 export function dispose() {

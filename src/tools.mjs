@@ -94,8 +94,20 @@ export async function runAction(a) {
           `  (est. fee ${formatMon(res.fee)} ${SYMBOL()}). Set PIMLICO_API_KEY in .env to broadcast for real.`
         );
       }
-      const url = `${config.chain.explorerUrl}/tx/${res.hash}`;
-      return `Sent ${a.amountMon} ${SYMBOL()} to ${a.to}\n  tx: ${res.hash}\n  ${url}`;
+      if (res.hash) {
+        const url = `${config.chain.explorerUrl}/tx/${res.hash}`;
+        return (
+          `Sent ${a.amountMon} ${SYMBOL()} to ${a.to}\n` +
+          `  tx:     ${res.hash}\n  ${url}\n` +
+          `  userOp: ${res.userOpHash}`
+        );
+      }
+      // Broadcast, but the receipt hasn't landed within the wait window.
+      return (
+        `Submitted ${a.amountMon} ${SYMBOL()} to ${a.to} (gasless UserOp)\n` +
+        `  userOp: ${res.userOpHash}\n` +
+        `  (not confirmed on-chain yet — should land shortly; re-check /balance)`
+      );
     }
 
     default:
