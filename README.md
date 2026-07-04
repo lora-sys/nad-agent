@@ -135,6 +135,12 @@ receipt, not the userOpHash. A `FIELD-REPORT-m4max.md` in the repo logs the full
 handles reliably-typed TTY input — piped/scripted stdin is flaky. For automation use
 `npm run smoke` (no readline). Verify interactive use on your Mac.
 
+## Contributing
+
+It's a v0 with on-purpose gaps. Grab a [`good first issue`](https://github.com/portdeveloper/nad-agent/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22),
+read [CONTRIBUTING.md](./CONTRIBUTING.md) for setup and the conventions that aren't up for debate, and
+open a PR. Security bugs go through [SECURITY.md](./SECURITY.md), not public issues.
+
 ## Layout
 
 ```
