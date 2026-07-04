@@ -18,6 +18,21 @@ you ──▶ QVAC (local LLM, on-device) ──▶ picks a wallet action ──
 
 ---
 
+## What it can do
+
+Talk to it in plain English (or use the slash-commands) and it drives a real wallet on Monad:
+
+- **`what's my address?`** → the agent's smart-account address
+- **`what's my balance?`** → live MON balance, read from Monad
+- **`send 0.1 MON to 0x…`** → asks you to confirm, then broadcasts a **gasless** transfer (the wallet pays 0 gas) and returns the on-chain tx hash + explorer link
+- anything else → the local model just replies in words
+
+It all runs **on-device**: the model never calls the cloud, and the wallet key never leaves the machine.
+
+**Scope (v0):** native MON only — `get_address`, `get_balance`, `send`. No ERC-20s, swaps, bridges, NFTs, or arbitrary contract calls yet; single account; testnet-first. It's a working proof-of-concept of a *local agentic wallet*, not a full DeFi suite — the [Upgrade path](#upgrade-path-bigger-agent) grows the toolset.
+
+---
+
 ## Develop on one machine, run on another
 
 This is the intended workflow, and it works because **code travels via git while native dependencies do not**:
@@ -46,16 +61,26 @@ npm run smoke               # non-interactive end-to-end check (wallet + model +
 npm start                   # loads the local model + wallet, opens the prompt
 ```
 
+> **macOS prerequisite:** QVAC's darwin-arm64 prebuild dynamically links Homebrew's OpenSSL 3. If
+> the model load aborts with `dlopen … libssl.3.dylib … (no such file)`, install it once with
+> `brew install openssl@3`.
+
 Recommended `.env` on an M4 Max (36 GB):
 
 ```ini
 WDK_SEED="…24 words…"
 MONAD_NETWORK=testnet
-QVAC_MODEL=GPT_OSS_20B_INST_Q4_K_M    # reliable tool-calling needs ~14B+; fits 36GB w/ Metal
+QVAC_MODEL=QWEN3_8B_INST_Q4_K_M       # ChatML instruct — verified tool-calling on Metal
 QVAC_CTX_SIZE=8192
 # PIMLICO_API_KEY=…                   # leave blank to dry-run; set to broadcast real txs
 # PIMLICO_SPONSORSHIP_POLICY_ID=sp_…  # set for truly gasless (wallet pays 0)
 ```
+
+> **Model choice:** any capable **ChatML** instruct model (Qwen3, Llama-3.x, …) works from a local
+> `.gguf` out of the box. `Qwen3-8B` is the tested default here — ~34 tok/s decode on an M4 Max.
+> **Heads-up on `GPT_OSS_20B`:** gpt-oss is *harmony*-only; loading it from a local file
+> (`QVAC_MODEL_PATH`) skips the harmony template and it emits gibberish. Use the QVAC **registry**
+> name for it (so QVAC applies harmony), or stick with a ChatML model. See [BUILD_LOG.md](./BUILD_LOG.md).
 
 Then talk to it:
 
@@ -99,6 +124,12 @@ Smoke-tested on Linux arm64 (CPU) with SmolLM2-360M in dry-run: WDK derives its 
 account and reads balances from Monad testnet; QVAC loads the local model (~1.8s) and
 turns "send 0.05 MON to 0x…" into a JSON action that runs as a dry-run send. See
 [BUILD_LOG.md](./BUILD_LOG.md) for the failures hit along the way and their fixes.
+
+Also verified on an **M4 Max (36 GB, Metal)** with **Qwen3-8B-Instruct (Q6_K)**: coherent
+natural-language tool-calling at ~34 tok/s, a live balance read from Monad testnet, and the full
+dry-run loop. Real gasless sending is wired up and Pimlico's bundler/paymaster is confirmed live on
+Monad testnet; sends report the **real on-chain tx hash** — resolved from the ERC-4337 UserOperation
+receipt, not the userOpHash. A `FIELD-REPORT-m4max.md` in the repo logs the full macOS bring-up.
 
 **Known limitation:** QVAC's worker inherits `stdin`, so the interactive REPL only
 handles reliably-typed TTY input — piped/scripted stdin is flaky. For automation use
