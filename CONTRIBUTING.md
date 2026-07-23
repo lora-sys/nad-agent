@@ -1,5 +1,12 @@
 # Contributing to nad-agent
 
+## How work lands
+
+All changes go through a pull request, and every pull request needs an approving
+review from @portdeveloper before it can merge. Direct pushes to the default
+branch are turned off. A merge means the work was read and accepted, not just
+that it was opened.
+
 Thanks for looking. nad-agent is a proof-of-concept: a 100% local AI agent with a gasless,
 self-custodial WDK smart wallet on Monad, with QVAC as the on-device brain. It's a v0 on purpose, so
 there's plenty of real work to pick up.
