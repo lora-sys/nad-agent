@@ -64,6 +64,8 @@ import {
   runAction,
   describeAction,
   isWrite,
+  previewSend,
+  renderSendPreview,
 } from "./tools.mjs";
 
 // ── color (no deps) ─────────────────────────────────────────────────────────
@@ -184,13 +186,27 @@ async function confirm(question) {
 async function handleAction(action) {
   if (action.action === "none") return false;
   if (isWrite(action.action)) {
-    console.log("\n  " + c.yellow(describeAction(action)));
+    // Send: build a resolved preview first, so a bad checksum or an
+    // over-balance send is rejected *before* the confirmation prompt.
+    if (action.action === "send_mon") {
+      let preview;
+      try {
+        preview = await previewSend(action);
+      } catch (err) {
+        println(c.red(`  Refused: ${err.message}`) + "\n");
+        if (SCRIPTED) hadFailure = true;
+        return true;
+      }
+      println("\n  " + c.yellow(renderSendPreview(preview).replace(/\n/g, "\n  ")));
+    } else {
+      println("\n  " + c.yellow(describeAction(action)));
+    }
     if (!(await confirmMainnetOnce())) {
-      console.log(c.dim("  cancelled.") + "\n");
+      println(c.dim("  cancelled.") + "\n");
       return true;
     }
     if (!(await confirm("  confirm?"))) {
-      console.log(c.dim("  cancelled.") + "\n");
+      println(c.dim("  cancelled.") + "\n");
       return true;
     }
   }

@@ -9,7 +9,7 @@
 
 import * as wallet from "./wallet.mjs";
 import { config } from "./config.mjs";
-import { parseMon, formatMon, formatTokenUnits, parseTokenAmount, isAddress } from "./format.mjs";
+import { parseMon, formatMon, formatTokenUnits, parseTokenAmount, isAddress, toChecksumAddress } from "./format.mjs";
 import { listKnownTokenSymbols, resolveToken } from "./tokens.mjs";
 
 export const ACTIONS = {
@@ -125,6 +125,54 @@ export function describeAction(a) {
   }
 }
 
+/**
+ * Pre-flight a send for the confirmation block. Resolves the recipient to its
+ * checksummed form (throws on a typo'd mixed-case checksum), reads the balance,
+ * and simulates fee + post-send balance so the user sees the effect before
+ * approving. Throws a caller-friendly Error on any rejectable condition.
+ */
+export async function previewSend(a) {
+  let to;
+  try {
+    to = toChecksumAddress(a.to);
+  } catch {
+    throw new Error(`"${a.to}" is not a valid address (checksum failed).`);
+  }
+  const value = parseMon(a.amountMon);
+  const before = await wallet.getBalance();
+  const insufficient = value > before;
+  // Best-effort fee simulation; never blocks the preview if the quote path errors.
+  let fee = 0n;
+  let simulated = false;
+  try {
+    const q = await wallet.quoteSend(to, value);
+    fee = BigInt(q?.fee ?? 0);
+    simulated = true;
+  } catch { /* quote unavailable — show the block without a fee number */ }
+  const paysGas = config.gasMode === "native";
+  const after = before - value - (paysGas ? fee : 0n);
+  const gasLabel =
+    config.gasMode === "sponsored" ? "gasless (paymaster covers fee)"
+    : config.gasMode === "dry-run" ? "dry-run (simulated, nothing broadcast)"
+    : "you pay gas in " + SYMBOL();
+  return { to, amountMon: a.amountMon, symbol: SYMBOL(), value, fee, simulated,
+           before, after, gasLabel, paysGas, insufficient };
+}
+
+/** Render the previewSend result as the confirmation block shown before y/N. */
+export function renderSendPreview(p) {
+  const lines = [
+    `To:       ${p.to}`,
+    `Amount:   ${p.amountMon} ${p.symbol}`,
+    `Gas:      ${p.gasLabel}` + (p.simulated && p.fee > 0n ? `  (~${formatMon(p.fee)} ${p.symbol})` : ""),
+    `Balance:  ${formatMon(p.before)} -> ${formatMon(p.after)} ${p.symbol}`,
+  ];
+  if (p.insufficient) {
+    lines.push(`WARNING:  balance is below the amount — this send would revert.`);
+  }
+  return lines.join("\n");
+}
+
 /** Execute an action. Returns a printable string. Assumes wallet is initialized for chain ops. */
 export async function runAction(a) {
   switch (a.action) {
@@ -167,26 +215,31 @@ export async function runAction(a) {
     }
 
     case "send_mon": {
-      if (!isAddress(a.to)) return `Refused: "${a.to}" is not a valid address.`;
+      let to;
+      try {
+        to = toChecksumAddress(a.to);
+      } catch {
+        return `Refused: "${a.to}" is not a valid address (checksum failed).`;
+      }
       const value = parseMon(a.amountMon);
-      const res = await wallet.send(a.to, value);
+      const res = await wallet.send(to, value);
       if (res.dryRun) {
         return (
-          `DRY RUN — would send ${a.amountMon} ${SYMBOL()} to ${a.to}\n` +
+          `DRY RUN — would send ${a.amountMon} ${SYMBOL()} to ${to}\n` +
           `  (est. fee ${formatMon(res.fee)} ${SYMBOL()}). Set PIMLICO_API_KEY in .env to broadcast for real.`
         );
       }
       if (res.hash) {
         const url = `${config.chain.explorerUrl}/tx/${res.hash}`;
         return (
-          `Sent ${a.amountMon} ${SYMBOL()} to ${a.to}\n` +
+          `Sent ${a.amountMon} ${SYMBOL()} to ${to}\n` +
           `  tx:     ${res.hash}\n  ${url}\n` +
           `  userOp: ${res.userOpHash}`
         );
       }
       // Broadcast, but the receipt hasn't landed within the wait window.
       return (
-        `Submitted ${a.amountMon} ${SYMBOL()} to ${a.to} (gasless UserOp)\n` +
+        `Submitted ${a.amountMon} ${SYMBOL()} to ${to} (gasless UserOp)\n` +
         `  userOp: ${res.userOpHash}\n` +
         `  (not confirmed on-chain yet — should land shortly; re-check /balance)`
       );
