@@ -144,11 +144,16 @@ export async function previewSend(a) {
   // Best-effort fee simulation; never blocks the preview if the quote path errors.
   let fee = 0n;
   let simulated = false;
+  let simError = null;
   try {
     const q = await wallet.quoteSend(to, value);
     fee = BigInt(q?.fee ?? 0);
     simulated = true;
-  } catch { /* quote unavailable — show the block without a fee number */ }
+  } catch (err) {
+    // The simulation itself failed: surface it as a possible revert so an
+    // obvious failure is caught before the confirmation prompt.
+    simError = err?.shortMessage || err?.message || "simulation failed";
+  }
   const paysGas = config.gasMode === "native";
   const after = before - value - (paysGas ? fee : 0n);
   const gasLabel =
@@ -156,7 +161,7 @@ export async function previewSend(a) {
     : config.gasMode === "dry-run" ? "dry-run (simulated, nothing broadcast)"
     : "you pay gas in " + SYMBOL();
   return { to, amountMon: a.amountMon, symbol: SYMBOL(), value, fee, simulated,
-           before, after, gasLabel, paysGas, insufficient };
+           before, after, gasLabel, paysGas, insufficient, simError };
 }
 
 /** Render the previewSend result as the confirmation block shown before y/N. */
@@ -169,6 +174,9 @@ export function renderSendPreview(p) {
   ];
   if (p.insufficient) {
     lines.push(`WARNING:  balance is below the amount — this send would revert.`);
+  }
+  if (p.simError && !p.insufficient) {
+    lines.push(`WARNING:  simulation failed, this send may revert (${p.simError}).`);
   }
   return lines.join("\n");
 }
