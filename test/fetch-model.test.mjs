@@ -7,16 +7,14 @@
 
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { existsSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, rmSync, statSync, writeFileSync, readFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import {
   GGUFDownloader,
   ResumeCheckFailed,
   FetchFailed,
   IntegrityError,
-  getRemoteSize,
   computeMD5,
-  readFile,
 } from "../scripts/fetch-model.mjs";
 
 // ---------------------------------------------------------------------------
@@ -25,13 +23,13 @@ import {
 
 const BODY = Buffer.from("GGUF model data here", "utf8");
 
-function fakeResponse({ status = 200, contentLength = BODY.length, checksum = null, extraHeaders = {}, body = BODY } = {}) {
+function fakeResponse({ status = 200, contentLength = BODY.length, contentMD5 = null, extraHeaders = {}, body = BODY } = {}) {
   const headers = new Headers({
     "Content-Type": "application/octet-stream",
     "Content-Length": String(contentLength),
     ...extraHeaders,
   });
-  if (checksum) headers.set("Content-MD5", checksum);
+  if (contentMD5) headers.set("Content-MD5", contentMD5);
   return new Response(body, { status, headers });
 }
 
@@ -73,7 +71,7 @@ describe("GGUFDownloader — fresh download", () => {
 
     assert.ok(existsSync(file), "file should exist");
     assert.equal(statSync(file).size, BODY.length, "file size should match body");
-    assert.deepEqual(readFile(file), BODY, "content should match");
+    assert.deepEqual(Buffer.from(readFileSync(file)), BODY, "content should match");
     cleanup(file);
   });
 
@@ -103,7 +101,7 @@ describe("GGUFDownloader — fresh download", () => {
     await dl.download(() => fakeResponse({ contentLength: 0 }));
 
     assert.ok(existsSync(file), "file should exist");
-    assert.deepEqual(readFile(file), BODY, "content should match");
+    assert.deepEqual(Buffer.from(readFileSync(file)), BODY, "content should match");
     cleanup(file);
   });
 });
@@ -132,7 +130,7 @@ describe("GGUFDownloader — resume with server support", () => {
 
     await dl.download(() => res);
 
-    const full = readFile(file);
+    const full = readFileSync(file);
     assert.equal(full.length, BODY.length, "full file should be complete");
     assert.ok(full.subarray(0, prefixLen).equals(prefix), "existing bytes should be preserved");
     assert.ok(full.subarray(prefixLen).equals(remaining), "new bytes should match");
@@ -173,7 +171,7 @@ describe("GGUFDownloader — resume with server support", () => {
     const res = fakeResponse({ status: 200, contentLength: BODY.length, body: BODY });
 
     await dl.download(() => res);
-    assert.deepEqual(readFile(file), BODY, "should contain fresh download, not old partial");
+    assert.deepEqual(readFileSync(file), BODY, "file should contain fresh download, not old partial");
     cleanup(file);
   });
 
@@ -193,6 +191,24 @@ describe("GGUFDownloader — resume with server support", () => {
       assert.ok(e instanceof ResumeCheckFailed, `expected ResumeCheckFailed, got ${e.name}`);
     }
     assert.ok(threw, "should throw on 416");
+    cleanup(file);
+  });
+
+  it("skips verifyFile when Content-Range has unknown total (*)", async () => {
+    // Content-Range: bytes 0-19/* means the server doesn't know the total
+    const file = path("unknown-total");
+    cleanup(file);
+
+    const dl = new GGUFDownloader(file, { progress: false });
+    const res = fakeResponse({
+      status: 206,
+      contentLength: BODY.length,
+      body: BODY,
+      extraHeaders: { "Content-Range": `bytes 0-${BODY.length - 1}/*` },
+    });
+
+    await dl.download(() => res);
+    assert.equal(readFileSync(file).length, BODY.length, "file should be complete");
     cleanup(file);
   });
 });
@@ -216,7 +232,61 @@ describe("GGUFDownloader — fallback to fresh download", () => {
 
     await dl.download(() => res);
 
-    assert.deepEqual(readFile(file), newBody, "file should contain new body, not old partial");
+    assert.deepEqual(readFileSync(file), newBody, "file should contain new body, not old partial");
+    cleanup(file);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// GGUFDownloader — Content-MD5 verification
+// ---------------------------------------------------------------------------
+
+describe("GGUFDownloader — Content-MD5", () => {
+  it("passes MD5 when Content-MD5 header matches", async () => {
+    const file = path("md5-pass");
+    cleanup(file);
+
+    const dl = new GGUFDownloader(file, { progress: false });
+    const checksum = md5Of(BODY);
+    const res = fakeResponse({
+      contentLength: BODY.length,
+      contentMD5: checksum,
+    });
+
+    await dl.download(() => res);
+    cleanup(file);
+  });
+
+  it("throws IntegrityError on MD5 mismatch via Content-MD5 header", async () => {
+    const file = path("md5-fail");
+    cleanup(file);
+
+    const dl = new GGUFDownloader(file, { progress: false });
+    const res = fakeResponse({
+      contentLength: BODY.length,
+      contentMD5: "AAAAAAAAAAAAAAAAAAAAAA==",
+    });
+
+    let threw = false;
+    try {
+      await dl.download(() => res);
+    } catch (e) {
+      threw = true;
+      assert.ok(e instanceof IntegrityError, `expected IntegrityError, got ${e.name}`);
+      assert.ok(String(e.message).toLowerCase().includes("md5"), `should mention md5: ${e.message}`);
+    }
+    assert.ok(threw, "should throw IntegrityError");
+    cleanup(file);
+  });
+
+  it("skips MD5 when Content-MD5 header is absent", async () => {
+    const file = path("md5-absent");
+    cleanup(file);
+
+    const dl = new GGUFDownloader(file, { progress: false });
+    await dl.download(() => fakeResponse({ contentLength: BODY.length }));
+
+    assert.ok(existsSync(file), "file should exist");
     cleanup(file);
   });
 });
@@ -302,41 +372,6 @@ describe("GGUFDownloader — verifyFile", () => {
     const dl = new GGUFDownloader(file, { progress: false });
     await dl.verifyFile({});
     cleanup(file);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// getRemoteSize
-// ---------------------------------------------------------------------------
-
-describe("getRemoteSize", () => {
-  it("returns Content-Length from HEAD response", async () => {
-    let capturedMethod = "";
-    const res = fakeResponse({ contentLength: 52428800 });
-    const size = await getRemoteSize(
-      (method) => { capturedMethod = method; return res; },
-      () => streamFromBuffer(BODY),
-    );
-    assert.equal(capturedMethod, "HEAD", "should use HEAD method");
-    assert.equal(size, 52428800, "should return Content-Length");
-  });
-
-  it("returns 0 when server omits Content-Length", async () => {
-    const res = fakeResponse({ contentLength: 0 });
-    const size = await getRemoteSize(() => res, () => streamFromBuffer(BODY));
-    assert.equal(size, 0, "should return 0");
-  });
-
-  it("throws FetchFailed on non-OK HEAD", async () => {
-    const res = fakeResponse({ status: 404 });
-    let threw = false;
-    try {
-      await getRemoteSize(() => res, () => streamFromBuffer(BODY));
-    } catch (e) {
-      threw = true;
-      assert.ok(e instanceof FetchFailed, `expected FetchFailed, got ${e.name}`);
-    }
-    assert.ok(threw, "should throw FetchFailed");
   });
 });
 

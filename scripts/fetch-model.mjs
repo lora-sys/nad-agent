@@ -3,8 +3,7 @@
  *
  * Exports:
  *   GGUFDownloader   — class for download + verify + resume logic
- *   getRemoteSize    — HEAD request to get Content-Length
- *   computeMD5       — MD5 checksum of a local file
+ *   computeMD5       — MD5 checksum of a local file (streaming)
  *
  * CLI (unchanged):
  *   node scripts/fetch-model.mjs <gguf-url> [outfile.gguf]
@@ -28,14 +27,15 @@ export class GGUFDownloader {
   }
 
   /**
-   * Main download entry point. Accepts factory functions for fetch and
-   * stream creation so tests can inject mocks.
+   * Main download entry point. Accepts a factory function for fetch so tests
+   * can inject mocks.
    *
    * Strategy:
    *  1. If a partial file exists, try a Range request.
    *  2. Validate the server's response (206 = resume OK, 200 = no resume, 416 = can't resume).
    *  3. Stream to disk, appending if resuming.
-   *  4. Call verifyFile if the server declared a Content-Length or checksum.
+   *  4. Verify file size against total from Content-Range (or Content-Length).
+   *  5. Verify MD5 if the server sent Content-MD5.
    */
   async download(fetchFn) {
     const hasPartial = existsSync(this.filePath);
@@ -51,30 +51,36 @@ export class GGUFDownloader {
     }
 
     const contentLength = Number(res.headers.get("Content-Length") || 0);
-    // For 206: Content-Length is the remaining chunk size, not total.
-    // Parse total from Content-Range if available.
-    let totalDeclared = contentLength;
+
+    // For 206: Content-Length is the chunk size; total from Content-Range.
+    // Content-Range: bytes N-M/* means unknown total.
+    let totalFileSize;
+    let md5Checksum = null;
     if (res.status === 206) {
       const range = res.headers.get("Content-Range");
-      if (range) {
-        const totalMatch = range.match(/\/(\d+)$/);
-        if (totalMatch) totalDeclared = Number(totalMatch[1]);
+      if (!range) throw new ResumeCheckFailed("206 without Content-Range");
+      const totalMatch = range.match(/\/(\d+)$/);
+      if (totalMatch) totalFileSize = Number(totalMatch[1]); // undefined if *
+      const offsetMatch = range.match(/bytes (\d+)-/);
+      if (!offsetMatch) throw new ResumeCheckFailed(`unparseable Content-Range: ${range}`);
+      const serverOffset = Number(offsetMatch[1]);
+      if (serverOffset !== existingSize) {
+        throw new ResumeCheckFailed(
+          `partial size (${existingSize}) doesn't match server offset (${serverOffset}); delete and retry`,
+        );
       }
+    } else {
+      totalFileSize = contentLength || undefined;
     }
 
-    // --- Resume validation ---
+    // Content-MD5 from response header
+    const contentMD5 = res.headers.get("Content-MD5");
+    if (contentMD5) md5Checksum = contentMD5.trim();
+
+    // --- Resume / fallback validation ---
     if (hasPartial && existingSize > 0) {
       if (res.status === 206) {
-        const range = res.headers.get("Content-Range");
-        if (!range) throw new ResumeCheckFailed("206 without Content-Range");
-        const match = range.match(/bytes (\d+)-/);
-        if (!match) throw new ResumeCheckFailed(`unparseable Content-Range: ${range}`);
-        const serverOffset = Number(match[1]);
-        if (serverOffset !== existingSize) {
-          throw new ResumeCheckFailed(
-            `partial size (${existingSize}) doesn't match server offset (${serverOffset}); delete and retry`,
-          );
-        }
+        // resume validated above
       } else if (res.status === 200) {
         console.warn(`server doesn't support resume; starting fresh download`);
       } else if (res.status === 416) {
@@ -90,37 +96,36 @@ export class GGUFDownloader {
       throw new FetchFailed(`${res.status} ${res.statusText}`);
     }
 
-    // --- Stream to disk ---
+    // --- Stream to disk (with inline MD5 hash) ---
     const writeMode = (hasPartial && existingSize > 0 && res.status === 206) ? "a" : "w";
     const body = Readable.fromWeb(res.body);
+    let received = existingSize;
 
     await new Promise((resolve, reject) => {
       const ws = createWriteStream(this.filePath, { flags: writeMode });
-      let received = existingSize;
       body.on("data", (chunk) => {
         received += chunk.length;
         if (this.progress && contentLength) {
-          // For 206, report progress against the chunk; for 200, against total.
-          const denominator = res.status === 206 ? contentLength : totalDeclared;
-          const pct = ((received / (denominator + (res.status === 206 ? existingSize : 0))) * 100).toFixed(1);
+          const target = totalFileSize || contentLength;
+          const pct = ((received / (target + (res.status === 206 ? existingSize : 0))) * 100).toFixed(1);
           process.stdout.write(`\r  ${pct}%   `);
         }
       });
       pipeline(body, ws).then(resolve, reject);
     });
 
-    if (this.progress) {
-      if (contentLength) process.stdout.write(`\n`);
+    if (this.progress && contentLength) {
+      process.stdout.write(`\n`);
       this._reportProgress(100);
     }
 
     // --- Verify ---
-    if (totalDeclared) await this.verifyFile({ contentLength: String(totalDeclared) });
+    if (totalFileSize) await this.verifyFile({ contentLength: String(totalFileSize), checksum: md5Checksum });
   }
 
   /**
-   * Verify the downloaded file against declared Content-Length and/or
-   * Content-MD5 header from the original response.
+   * Verify the downloaded file against declared Content-Length and/or checksum.
+   * @param {{ contentLength?: string, checksum?: string }} opts
    */
   async verifyFile({ contentLength, checksum } = {}) {
     const actualSize = statSync(this.filePath).size;
@@ -133,7 +138,6 @@ export class GGUFDownloader {
 
     if (checksum) {
       const expected = checksum.trim();
-      // Content-MD5 is base64-encoded; accept that format
       const actual = computeMD5(this.filePath);
       if (actual !== expected) {
         throw new IntegrityError(
@@ -179,13 +183,6 @@ export class IntegrityError extends Error {
 // Helpers
 // ---------------------------------------------------------------------------
 
-/** Send a HEAD request and return Content-Length (0 if absent). */
-export async function getRemoteSize(fetchFn) {
-  const res = await fetchFn("HEAD", undefined, {});
-  if (!res.ok) throw new FetchFailed(`${res.status} ${res.statusText}`);
-  return Number(res.headers.get("Content-Length") || 0);
-}
-
 /** Base64-encoded MD5 of a local file, or "" if missing. */
 export function computeMD5(filePath) {
   if (!existsSync(filePath)) return "";
@@ -194,17 +191,22 @@ export function computeMD5(filePath) {
   return hash.digest("base64");
 }
 
-/** Read a file into a Buffer for test assertions. */
-export function readFile(path) {
-  return readFileSync(path);
-}
-
 // ---------------------------------------------------------------------------
-// CLI entry point (unchanged interface)
+// CLI entry point
 // ---------------------------------------------------------------------------
 
-const url = process.argv[2];
-if (url) {
+const isEntryPoint = new URL(import.meta.url).pathname === process.argv[1];
+
+if (isEntryPoint) {
+  const url = process.argv[2];
+  if (!url) {
+    console.error(
+      "usage: node scripts/fetch-model.mjs <gguf-url> [outfile.gguf]\n" +
+        "  find a URL on HuggingFace (the QVAC registry entry's `src`), e.g. a *.gguf resolve link.",
+    );
+    process.exit(1);
+  }
+
   mkdirSync("models", { recursive: true });
   const out = join("models", process.argv[3] || basename(new URL(url).pathname) || "model.gguf");
 
