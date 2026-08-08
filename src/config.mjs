@@ -54,6 +54,8 @@ export const config = {
   bundlerUrl: pimlicoKey
     ? `https://api.pimlico.io/v2/${chain.chainId}/rpc?apikey=${pimlicoKey}`
     : "",
+  // Which derived account to use (BIP-44 index). Default 0 keeps v0 behavior.
+  accountIndex: Number(process.env.WDK_ACCOUNT_INDEX || 0),
   seed: process.env.WDK_SEED || "",
   model: {
     name: process.env.QVAC_MODEL || "QWEN3_8B_INST_Q4_K_M",

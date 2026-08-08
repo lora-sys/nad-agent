@@ -15,6 +15,7 @@ import { config } from "./config.mjs";
 let manager = null;
 let account = null;
 let address = null;
+let accountIndex = null;
 let readProvider = null;
 
 const ERC20_ABI = [
@@ -61,13 +62,51 @@ export async function initWallet() {
   }
   const { default: WalletManagerEvmErc4337 } = await import("@tetherto/wdk-wallet-evm-erc-4337");
   manager = new WalletManagerEvmErc4337(config.seed, buildWalletConfig());
-  account = await manager.getAccount(0);
+  // Start at config.accountIndex (default 0 = v0 behavior).
+  account = await manager.getAccount(config.accountIndex);
+  accountIndex = config.accountIndex;
   address = await account.getAddress();
   return address;
 }
 
 export function getAddress() {
   return address;
+}
+
+/** The currently active BIP-44 account index (0 = default). */
+export function getActiveAccountIndex() {
+  return accountIndex ?? 0;
+}
+
+/**
+ * Switch to a different derived account by BIP-44 index.
+ * The same seed, different index → different address.
+ * Returns the new address.
+ */
+export async function switchAccount(index) {
+  if (!manager) throw new Error("Wallet not initialized");
+  const i = Number(index);
+  if (!Number.isInteger(i) || i < 0) throw new Error(`Invalid account index: ${index}`);
+  account = await manager.getAccount(i);
+  accountIndex = i;
+  address = await account.getAddress();
+  return address;
+}
+
+/**
+ * Derive N accounts from the seed (indices 0..count-1) and return
+ * their addresses. Index 0 is always included.
+ * In dry-run mode we still derive keys locally (no RPC needed).
+ */
+export async function listAccounts(count = 5) {
+  if (!manager) throw new Error("Wallet not initialized");
+  const n = Math.max(1, Math.min(Number(count), 20));
+  const accounts = [];
+  for (let i = 0; i < n; i++) {
+    const acc = await manager.getAccount(i);
+    accounts.push({ index: i, address: await acc.getAddress() });
+  }
+  return accounts;
 }
 
 export async function getBalance() {

@@ -259,6 +259,8 @@ async function handleSlash(line) {
         : handleAction({ action: "get_balance" });
     case "send":
       return handleAction({ action: "send_mon", to: rest[0], amountMon: rest[1] });
+    case "account":
+      return handleAction({ action: "account", index: rest[0] ?? undefined });
     case "config":
       statusBlock();
       console.log("");
@@ -269,6 +271,7 @@ async function handleSlash(line) {
           "  " + c.cyan("/address") + c.dim("           the agent's wallet address") + "\n" +
           "  " + c.cyan("/balance [token]") + c.dim("   native MON or ERC-20 balance") + "\n" +
           "  " + c.cyan("/send <to> <mon>") + c.dim("   send MON (asks you to confirm)") + "\n" +
+          "  " + c.cyan("/account [index]") + c.dim("   list / switch derived account") + "\n" +
           "  " + c.cyan("/config") + c.dim("  ·  ") + c.cyan("/help") + c.dim("  ·  ") + c.cyan("/exit") + "\n\n" +
           "  " + c.dim("or just talk — ") + c.qvac("QVAC") + c.dim(" turns it into an action: ") + c.gray('"send 0.1 MON to 0x…"') + "\n"
       );

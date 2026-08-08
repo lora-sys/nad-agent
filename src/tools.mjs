@@ -26,6 +26,10 @@ export const ACTIONS = {
     args: ["token", "to", "amount"],
     desc: "Send an ERC-20 token to `to` — a 0x address or an address-book name. `token` is a symbol (e.g. USDC) or contract address. `amount` is a human-readable string.",
   },
+  account: {
+    args: ["index"],
+    desc: "List derived accounts (no args) or switch to account `index` (BIP-44).",
+  },
   none: { args: [], desc: "The message is not an on-chain request; just reply in words." },
 };
 
@@ -141,6 +145,12 @@ export function describeAction(a, resolved) {
       return "Read: your MON balance";
     case "get_token_balance":
       return `Read: your ${a.token ?? a.symbol ?? a.tokenAddress ?? "token"} token balance`;
+    case "account": {
+      if (a.index !== undefined && a.index !== null && a.index !== "") {
+        return `Switch to account #${a.index}`;
+      }
+      return "Read: list derived accounts";
+    }
     case "send_mon": {
       // `resolved` is a separate argument, never a field on `a`: `a` is built from model
       // output. There is deliberately no fallback that resolves here — a second resolution
@@ -275,6 +285,23 @@ export async function runAction(a, resolved) {
       const label = symbol || token.address;
       const detail = name && name !== label ? ` (${name})` : "";
       return `${formatTokenUnits(bal, decimals)} ${label}${detail}\n  token: ${token.address}`;
+    }
+
+    case "account": {
+      const i = a.index !== undefined && a.index !== null && a.index !== ""
+        ? Number(a.index)
+        : null;
+      if (i !== null) {
+        if (!Number.isInteger(i) || i < 0) return `Refused: "${a.index}" is not a valid account index.`;
+        const newAddr = await wallet.switchAccount(i);
+        return `Switched to account #${i}\n  address: ${newAddr}`;
+      }
+      const accounts = await wallet.listAccounts(5);
+      const cur = wallet.getActiveAccountIndex();
+      const lines = accounts.map((acc) =>
+        `  ${acc.index === cur ? "→ " : "  "}#${acc.index}  ${acc.address}`
+      );
+      return `Derived accounts (active: #${cur}):\n${lines.join("\n")}`;
     }
 
     case "send_mon": {
