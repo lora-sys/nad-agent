@@ -9,7 +9,7 @@
 
 import * as wallet from "./wallet.mjs";
 import { config } from "./config.mjs";
-import { parseMon, formatMon, formatTokenUnits, isAddress } from "./format.mjs";
+import { parseMon, formatMon, formatTokenUnits, parseTokenAmount, isAddress } from "./format.mjs";
 import { listKnownTokenSymbols, resolveToken } from "./tokens.mjs";
 
 export const ACTIONS = {
@@ -20,6 +20,10 @@ export const ACTIONS = {
     desc: "Show an ERC-20 token balance by token symbol or contract address.",
   },
   send_mon: { args: ["to", "amountMon"], desc: "Send native MON to an address `to`, amount in MON as a string." },
+  send_token: {
+    args: ["token", "to", "amount"],
+    desc: "Send an ERC-20 token to an address `to`. `token` is a symbol (e.g. USDC) or contract address. `amount` is a human-readable string.",
+  },
   none: { args: [], desc: "The message is not an on-chain request; just reply in words." },
 };
 
@@ -96,7 +100,7 @@ export function parseAction(text) {
 
 /** True if the action mutates chain state and should require confirmation. */
 export function isWrite(action) {
-  return action === "send_mon";
+  return action === "send_mon" || action === "send_token";
 }
 
 /** Human-readable preview of what an action will do (shown before confirmation). */
@@ -111,6 +115,11 @@ export function describeAction(a) {
     case "send_mon":
       return `Send ${a.amountMon} ${SYMBOL()} -> ${a.to}` +
         (config.gasMode === "dry-run" ? "  (DRY RUN — will be simulated)" : config.gasMode === "sponsored" ? "  (gasless)" : "  (you pay gas)");
+    case "send_token": {
+      const label = a.tokenSymbol || a.token || "token";
+      return `Send ${a.amount} ${label} -> ${a.to}` +
+        (config.gasMode === "dry-run" ? "  (DRY RUN — will be simulated)" : config.gasMode === "sponsored" ? "  (gasless)" : "  (you pay gas)");
+    }
     default:
       return "No on-chain action";
   }
@@ -178,6 +187,48 @@ export async function runAction(a) {
       // Broadcast, but the receipt hasn't landed within the wait window.
       return (
         `Submitted ${a.amountMon} ${SYMBOL()} to ${a.to} (gasless UserOp)\n` +
+        `  userOp: ${res.userOpHash}\n` +
+        `  (not confirmed on-chain yet — should land shortly; re-check /balance)`
+      );
+    }
+
+    case "send_token": {
+      if (!isAddress(a.to)) return `Refused: "${a.to}" is not a valid address.`;
+      const input = a.token ?? a.tokenSymbol ?? a.tokenAddress ?? "";
+      if (!input) return "Refused: no token specified. Use a symbol (e.g. USDC) or contract address.";
+
+      const token = resolveToken(input);
+      if (!token) {
+        const known = listKnownTokenSymbols();
+        const hint = known.length ? ` Known ${config.chain.network} symbols: ${known.join(", ")}.` : "";
+        return `Unknown token "${String(input).trim()}" on ${config.chain.name}. Use a token contract address.${hint}`;
+      }
+
+      const amountWei = parseTokenAmount(a.amount, token.decimals);
+      if (amountWei === null) return `Refused: "${a.amount}" is not a valid token amount.`;
+
+      const res = await wallet.sendToken(a.to, token.address, amountWei);
+      const label = token.symbol || token.address;
+
+      if (res.dryRun) {
+        return (
+          `DRY RUN — would send ${a.amount} ${label} to ${a.to}\n` +
+          `  token: ${token.address}\n` +
+          `  (est. fee ${formatMon(res.fee)} ${SYMBOL()}). Set PIMLICO_API_KEY in .env to broadcast for real.`
+        );
+      }
+      if (res.hash) {
+        const url = `${config.chain.explorerUrl}/tx/${res.hash}`;
+        return (
+          `Sent ${a.amount} ${label} to ${a.to}\n` +
+          `  token:  ${token.address}\n` +
+          `  tx:     ${res.hash}\n  ${url}\n` +
+          `  userOp: ${res.userOpHash}`
+        );
+      }
+      return (
+        `Submitted ${a.amount} ${label} to ${a.to} (gasless UserOp)\n` +
+        `  token:  ${token.address}\n` +
         `  userOp: ${res.userOpHash}\n` +
         `  (not confirmed on-chain yet — should land shortly; re-check /balance)`
       );

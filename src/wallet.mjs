@@ -9,7 +9,7 @@
  * wallet is actually needed (and so the doctor/help paths work without it).
  */
 
-import { Contract, JsonRpcProvider, getAddress as checksumAddress } from "ethers";
+import { Contract, JsonRpcProvider, getAddress as checksumAddress, Interface, ZeroAddress } from "ethers";
 import { config } from "./config.mjs";
 
 let manager = null;
@@ -22,6 +22,7 @@ const ERC20_ABI = [
   "function decimals() view returns (uint8)",
   "function symbol() view returns (string)",
   "function name() view returns (string)",
+  "function transfer(address to, uint256 amount) returns (bool)",
 ];
 
 function getReadProvider() {
@@ -108,7 +109,6 @@ export async function quoteSend(to, valueWei) {
 export async function send(to, valueWei) {
   if (!account) throw new Error("Wallet not initialized");
   if (config.gasMode === "dry-run") {
-    // Best-effort quote so the dry-run still exercises the estimation path.
     let fee = 0n;
     try {
       const q = await account.quoteSendTransaction({ to, value: valueWei });
@@ -119,10 +119,29 @@ export async function send(to, valueWei) {
     return { dryRun: true, to, value: valueWei, fee };
   }
   const res = await account.sendTransaction({ to, value: valueWei });
-  // IMPORTANT: res.hash is the ERC-4337 *userOpHash*, NOT an on-chain tx hash. The
-  // bundler wraps the UserOperation into a real transaction; the actual tx hash only
-  // exists once it's mined. Resolve it from the userOp receipt so the explorer link
-  // points at a real transaction instead of an unresolvable userOpHash.
+  const userOpHash = res.hash;
+  const hash = await waitForUserOpTxHash(userOpHash);
+  return { userOpHash, hash, fee: BigInt(res.fee ?? 0) };
+}
+
+/**
+ * Broadcast (or, in dry-run, simulate) an ERC-20 token transfer.
+ * Uses WDK's native transfer() which builds the ERC-20 transfer userOp.
+ * Returns { dryRun } | { userOpHash, hash, fee }.
+ */
+export async function sendToken(to, tokenAddress, amountWei) {
+  if (!account) throw new Error("Wallet not initialized");
+  if (config.gasMode === "dry-run") {
+    let fee = 0n;
+    try {
+      const q = await account.quoteTransfer?.({ token: tokenAddress, recipient: to, amount: amountWei });
+      fee = BigInt(q?.fee ?? 0);
+    } catch {
+      /* estimation may need a bundler; ignore in dry-run */
+    }
+    return { dryRun: true, to, token: tokenAddress, value: amountWei, fee };
+  }
+  const res = await account.transfer({ token: tokenAddress, recipient: to, amount: amountWei });
   const userOpHash = res.hash;
   const hash = await waitForUserOpTxHash(userOpHash);
   return { userOpHash, hash, fee: BigInt(res.fee ?? 0) };
