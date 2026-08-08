@@ -56,10 +56,17 @@ function buildWalletConfig() {
   return { ...base, useNativeCoins: true };
 }
 
+export function validateAccountIndex(idx) {
+  if (!Number.isInteger(idx) || idx < 0) {
+    throw new Error(`WDK_ACCOUNT_INDEX must be a non-negative integer, got: ${idx}`);
+  }
+}
+
 export async function initWallet() {
   if (!config.seed) {
     throw new Error("WDK_SEED is not set. Generate one with `npm run gen-seed`, then put it in .env");
   }
+  validateAccountIndex(config.accountIndex);
   const { default: WalletManagerEvmErc4337 } = await import("@tetherto/wdk-wallet-evm-erc-4337");
   manager = new WalletManagerEvmErc4337(config.seed, buildWalletConfig());
   // Start at config.accountIndex (default 0 = v0 behavior).

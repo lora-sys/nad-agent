@@ -11,7 +11,8 @@
 import { describe, it, test } from "node:test";
 import assert from "node:assert/strict";
 import { config } from "../src/config.mjs";
-import { ACTIONS, parseAction, describeAction, systemPrompt } from "../src/tools.mjs";
+import { ACTIONS, parseAction, describeAction, systemPrompt, runAction } from "../src/tools.mjs";
+import { validateAccountIndex } from "../src/wallet.mjs";
 
 // ---------------------------------------------------------------------------
 // config.accountIndex
@@ -112,6 +113,63 @@ describe("systemPrompt — account coverage", () => {
     for (const key of Object.keys(ACTIONS)) {
       assert.ok(prompt.includes(key), `systemPrompt() missing action "${key}"`);
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// validateAccountIndex — guard for initWallet and switchAccount
+// ---------------------------------------------------------------------------
+
+describe("validateAccountIndex", () => {
+  it("accepts 0", () => {
+    assert.doesNotThrow(() => validateAccountIndex(0));
+  });
+
+  it("accepts positive integers", () => {
+    assert.doesNotThrow(() => validateAccountIndex(42));
+  });
+
+  it("rejects negative numbers", () => {
+    assert.throws(() => validateAccountIndex(-1), /non-negative/);
+  });
+
+  it("rejects NaN", () => {
+    assert.throws(() => validateAccountIndex(NaN), /non-negative/);
+  });
+
+  it("rejects non-integers", () => {
+    assert.throws(() => validateAccountIndex(1.5), /non-negative/);
+  });
+
+  it("rejects non-numbers", () => {
+    assert.throws(() => validateAccountIndex("abc"), /non-negative/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// runAction — account integration
+// ---------------------------------------------------------------------------
+
+describe("runAction — account", () => {
+  it("account list throws when wallet is not initialized", async () => {
+    let threw = false;
+    try {
+      await runAction({ action: "account" });
+    } catch (e) {
+      threw = true;
+      assert.ok(String(e.message).toLowerCase().includes("not initialized"));
+    }
+    assert.ok(threw, "should throw when wallet not initialized");
+  });
+
+  it("account switch with invalid index returns refusal", async () => {
+    const res = await runAction({ action: "account", index: "-1" });
+    assert.match(String(res), /refused/i);
+  });
+
+  it("account switch with non-integer returns refusal", async () => {
+    const res = await runAction({ action: "account", index: "abc" });
+    assert.match(String(res), /refused/i);
   });
 });
 
