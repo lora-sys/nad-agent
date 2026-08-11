@@ -55,6 +55,7 @@ const println = (...a) => (SCRIPTED ? console.error(...a) : console.log(...a));
 const printw = (s) => (SCRIPTED ? process.stderr.write(s) : process.stdout.write(s));
 
 import { config } from "./config.mjs";
+import { toChecksumAddress } from "./format.mjs";
 import * as wallet from "./wallet.mjs";
 import * as brain from "./agent.mjs";
 import {
@@ -184,20 +185,33 @@ async function confirm(question) {
 
 /** Execute a parsed action, confirming writes. Returns nothing (prints results). */
 async function handleAction(action) {
+  let sendPreviewTo = null;
   if (action.action === "none") return false;
   if (isWrite(action.action)) {
-    // Send: build a resolved preview first, so a bad checksum or an
-    // over-balance send is rejected *before* the confirmation prompt.
+    // Send: resolve the recipient ONCE, then build the preview from the
+    // resolved address. A bad checksum is refused before the prompt; an
+    // over-balance send is surfaced as a WARNING in the block and still
+    // prompts (per #24). When #42's address book lands, its name resolution
+    // slots in right here, before this checksum step.
     if (action.action === "send_mon") {
+      let resolvedTo;
+      try {
+        resolvedTo = toChecksumAddress(action.to);
+      } catch {
+        println(c.red(`  Refused: "${action.to}" is not a valid address (checksum failed).`) + "\n");
+        if (SCRIPTED) hadFailure = true;
+        return true;
+      }
       let preview;
       try {
-        preview = await previewSend(action);
+        preview = await previewSend(action, resolvedTo);
       } catch (err) {
         println(c.red(`  Refused: ${err.message}`) + "\n");
         if (SCRIPTED) hadFailure = true;
         return true;
       }
       println("\n  " + c.yellow(renderSendPreview(preview).replace(/\n/g, "\n  ")));
+      sendPreviewTo = preview.to;
     } else {
       println("\n  " + c.yellow(describeAction(action)));
     }
@@ -211,7 +225,7 @@ async function handleAction(action) {
     }
   }
   try {
-    const out = await runAction(action);
+    const out = await runAction(action, sendPreviewTo);
     if (out != null) console.log("  " + c.cyan(out.replace(/\n/g, "\n  ")) + "\n");
   } catch (err) {
     console.log(c.red(`  error: ${err.message}`) + "\n");

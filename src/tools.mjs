@@ -126,20 +126,16 @@ export function describeAction(a) {
 }
 
 /**
- * Pre-flight a send for the confirmation block. Resolves the recipient to its
- * checksummed form (throws on a typo'd mixed-case checksum), reads the balance,
- * and simulates fee + post-send balance so the user sees the effect before
- * approving. Throws a caller-friendly Error on any rejectable condition.
+ * Pre-flight a send for the confirmation block. Takes the ALREADY-RESOLVED
+ * checksummed recipient (the caller resolves once, so an address-book name
+ * from #42 can be mapped before this runs), reads the balance, and simulates
+ * fee + post-send balance so the user sees the effect before approving.
  */
-export async function previewSend(a) {
-  let to;
-  try {
-    to = toChecksumAddress(a.to);
-  } catch {
-    throw new Error(`"${a.to}" is not a valid address (checksum failed).`);
-  }
+export async function previewSend(a, to) {
   const value = parseMon(a.amountMon);
   const before = await wallet.getBalance();
+  // Known follow-up: this compares against the amount alone; a native-gas send
+  // that only reverts because of the added fee shows no warning here.
   const insufficient = value > before;
   // Best-effort fee simulation; never blocks the preview if the quote path errors.
   let fee = 0n;
@@ -182,7 +178,7 @@ export function renderSendPreview(p) {
 }
 
 /** Execute an action. Returns a printable string. Assumes wallet is initialized for chain ops. */
-export async function runAction(a) {
+export async function runAction(a, resolvedTo = null) {
   switch (a.action) {
     case "get_address":
       return wallet.getAddress() ?? "(wallet not initialized)";
@@ -223,11 +219,16 @@ export async function runAction(a) {
     }
 
     case "send_mon": {
-      let to;
-      try {
-        to = toChecksumAddress(a.to);
-      } catch {
-        return `Refused: "${a.to}" is not a valid address (checksum failed).`;
+      // Single resolution point: the CLI passes the previewed address through,
+      // so nothing re-resolves between the y/N prompt and the signature.
+      // Direct callers (e2e, library use) fall back to resolving here.
+      let to = resolvedTo;
+      if (!to) {
+        try {
+          to = toChecksumAddress(a.to);
+        } catch {
+          return `Refused: "${a.to}" is not a valid address (checksum failed).`;
+        }
       }
       const value = parseMon(a.amountMon);
       const res = await wallet.send(to, value);
