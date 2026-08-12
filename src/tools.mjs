@@ -9,7 +9,7 @@
 
 import * as wallet from "./wallet.mjs";
 import { config } from "./config.mjs";
-import { parseMon, formatMon, formatTokenUnits, parseTokenAmount, isAddress } from "./format.mjs";
+import { parseMon, formatMon, formatTokenUnits, parseTokenAmount, isAddress, toChecksumAddress } from "./format.mjs";
 import { listKnownTokenSymbols, resolveToken } from "./tokens.mjs";
 
 export const ACTIONS = {
@@ -125,8 +125,60 @@ export function describeAction(a) {
   }
 }
 
+/**
+ * Pre-flight a send for the confirmation block. Takes the ALREADY-RESOLVED
+ * checksummed recipient (the caller resolves once, so an address-book name
+ * from #42 can be mapped before this runs), reads the balance, and simulates
+ * fee + post-send balance so the user sees the effect before approving.
+ */
+export async function previewSend(a, to) {
+  const value = parseMon(a.amountMon);
+  const before = await wallet.getBalance();
+  // Known follow-up: this compares against the amount alone; a native-gas send
+  // that only reverts because of the added fee shows no warning here.
+  const insufficient = value > before;
+  // Best-effort fee simulation; never blocks the preview if the quote path errors.
+  let fee = 0n;
+  let simulated = false;
+  let simError = null;
+  try {
+    const q = await wallet.quoteSend(to, value);
+    fee = BigInt(q?.fee ?? 0);
+    simulated = true;
+  } catch (err) {
+    // The simulation itself failed: surface it as a possible revert so an
+    // obvious failure is caught before the confirmation prompt.
+    simError = err?.shortMessage || err?.message || "simulation failed";
+  }
+  const paysGas = config.gasMode === "native";
+  const after = before - value - (paysGas ? fee : 0n);
+  const gasLabel =
+    config.gasMode === "sponsored" ? "gasless (paymaster covers fee)"
+    : config.gasMode === "dry-run" ? "dry-run (simulated, nothing broadcast)"
+    : "you pay gas in " + SYMBOL();
+  return { to, amountMon: a.amountMon, symbol: SYMBOL(), value, fee, simulated,
+           before, after, gasLabel, paysGas, insufficient, simError };
+}
+
+/** Render the previewSend result as the confirmation block shown before y/N. */
+export function renderSendPreview(p) {
+  const lines = [
+    `To:       ${p.to}`,
+    `Amount:   ${p.amountMon} ${p.symbol}`,
+    `Gas:      ${p.gasLabel}` + (p.simulated && p.fee > 0n ? `  (~${formatMon(p.fee)} ${p.symbol})` : ""),
+    `Balance:  ${formatMon(p.before)} -> ${formatMon(p.after)} ${p.symbol}`,
+  ];
+  if (p.insufficient) {
+    lines.push(`WARNING:  balance is below the amount — this send would revert.`);
+  }
+  if (p.simError && !p.insufficient) {
+    lines.push(`WARNING:  simulation failed, this send may revert (${p.simError}).`);
+  }
+  return lines.join("\n");
+}
+
 /** Execute an action. Returns a printable string. Assumes wallet is initialized for chain ops. */
-export async function runAction(a) {
+export async function runAction(a, resolvedTo = null) {
   switch (a.action) {
     case "get_address":
       return wallet.getAddress() ?? "(wallet not initialized)";
@@ -167,26 +219,36 @@ export async function runAction(a) {
     }
 
     case "send_mon": {
-      if (!isAddress(a.to)) return `Refused: "${a.to}" is not a valid address.`;
+      // Single resolution point: the CLI passes the previewed address through,
+      // so nothing re-resolves between the y/N prompt and the signature.
+      // Direct callers (e2e, library use) fall back to resolving here.
+      let to = resolvedTo;
+      if (!to) {
+        try {
+          to = toChecksumAddress(a.to);
+        } catch {
+          return `Refused: "${a.to}" is not a valid address (checksum failed).`;
+        }
+      }
       const value = parseMon(a.amountMon);
-      const res = await wallet.send(a.to, value);
+      const res = await wallet.send(to, value);
       if (res.dryRun) {
         return (
-          `DRY RUN — would send ${a.amountMon} ${SYMBOL()} to ${a.to}\n` +
+          `DRY RUN — would send ${a.amountMon} ${SYMBOL()} to ${to}\n` +
           `  (est. fee ${formatMon(res.fee)} ${SYMBOL()}). Set PIMLICO_API_KEY in .env to broadcast for real.`
         );
       }
       if (res.hash) {
         const url = `${config.chain.explorerUrl}/tx/${res.hash}`;
         return (
-          `Sent ${a.amountMon} ${SYMBOL()} to ${a.to}\n` +
+          `Sent ${a.amountMon} ${SYMBOL()} to ${to}\n` +
           `  tx:     ${res.hash}\n  ${url}\n` +
           `  userOp: ${res.userOpHash}`
         );
       }
       // Broadcast, but the receipt hasn't landed within the wait window.
       return (
-        `Submitted ${a.amountMon} ${SYMBOL()} to ${a.to} (gasless UserOp)\n` +
+        `Submitted ${a.amountMon} ${SYMBOL()} to ${to} (gasless UserOp)\n` +
         `  userOp: ${res.userOpHash}\n` +
         `  (not confirmed on-chain yet — should land shortly; re-check /balance)`
       );
