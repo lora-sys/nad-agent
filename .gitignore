@@ -18,3 +18,4 @@ models/
 # OS / editor
 .DS_Store
 *.log
+policy.json

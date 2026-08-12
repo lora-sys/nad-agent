@@ -27,6 +27,10 @@ let rl;
 // confirmations consume the next scripted line, preserving REPL semantics
 // (`printf '/send 0xdead 0.1\ny\n' | nad-agent`).
 const SCRIPTED = !stdin.isTTY;
+// Declarative spend policy (optional file). Loaded once at startup so a broken
+// policy fails loudly before any send, and the session budget accumulates here.
+let policy = null;
+let sessionSpent = 0n;
 let scriptLines = [];
 let hadFailure = false;
 
@@ -55,6 +59,8 @@ const println = (...a) => (SCRIPTED ? console.error(...a) : console.log(...a));
 const printw = (s) => (SCRIPTED ? process.stderr.write(s) : process.stdout.write(s));
 
 import { config } from "./config.mjs";
+import { parseMon } from "./format.mjs";
+import { loadPolicy, checkPolicy, hasRules } from "./policy.mjs";
 import * as wallet from "./wallet.mjs";
 import * as brain from "./agent.mjs";
 import { addressBookWarnings, formatRecipient } from "./addressBook.mjs";
@@ -200,10 +206,23 @@ async function handleAction(action) {
       return true;
     }
     resolved = prep.recipient;
+    // Policy runs on the resolved recipient, before anything is shown, so it
+    // covers every write action: the allowlist applies to token transfers too,
+    // while the MON amount limits only bind native sends.
+    const verdict = checkPolicy(policy, {
+      to: resolved.address,
+      value: action.action === "send_mon" ? parseMon(action.amountMon) : null,
+      sessionSpent,
+    });
+    if (!verdict.ok) {
+      println(c.red(`  Refused: policy ${verdict.rule}: ${verdict.message}`) + "\n");
+      if (SCRIPTED) hadFailure = true;
+      return true;
+    }
     if (action.action === "send_mon") {
       let preview;
       try {
-        preview = await previewSend(action, resolved.address);
+        preview = await previewSend(action, resolved.address, { policy, sessionSpent });
       } catch (err) {
         println(c.red(`  Refused: ${err.message}`) + "\n");
         if (SCRIPTED) hadFailure = true;
@@ -227,6 +246,9 @@ async function handleAction(action) {
   }
   try {
     const out = await runAction(action, resolved);
+    // Only native amounts count against the session budget; token amounts are
+    // not denominated in MON, so the policy governs their recipient only.
+    if (action.action === "send_mon" && resolved) sessionSpent += parseMon(action.amountMon);
     if (out != null) console.log("  " + c.cyan(out.replace(/\n/g, "\n  ")) + "\n");
   } catch (err) {
     console.log(c.red(`  error: ${err.message}`) + "\n");
@@ -275,6 +297,17 @@ async function main() {
   if (SCRIPTED) scriptLines = await readScriptLines();
 
   banner();
+
+  // A malformed policy must stop the agent before any send, never be ignored.
+  try {
+    policy = loadPolicy();
+  } catch (err) {
+    println(c.red(`   policy: ${err.message}`) + "\n");
+    process.exit(1);
+  }
+  if (hasRules(policy)) {
+    println("   " + c.dim("policy  ") + c.yellow(`enforcing rules from ${policy.path}`));
+  }
 
   // 1) Wallet — reads work with just an RPC; writes need Pimlico (else dry-run).
   printw(c.dim("   ") + c.violet("WDK") + c.dim(" · initializing wallet… "));
