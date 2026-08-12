@@ -60,7 +60,7 @@ const printw = (s) => (SCRIPTED ? process.stderr.write(s) : process.stdout.write
 
 import { config } from "./config.mjs";
 import { parseMon } from "./format.mjs";
-import { loadPolicy, checkPolicy, hasRules } from "./policy.mjs";
+import { loadPolicy, hasRules } from "./policy.mjs";
 import * as wallet from "./wallet.mjs";
 import * as brain from "./agent.mjs";
 import { addressBookWarnings, formatRecipient } from "./addressBook.mjs";
@@ -199,26 +199,13 @@ async function handleAction(action) {
     // the address on screen is the address that gets signed, even if the address book changes
     // while the prompt is open. resolveSend covers a book name and a raw address alike, so it
     // replaces the inline checksum step this block used to do.
-    const prep = resolveSend(action);
+    const prep = resolveSend(action, { policy, sessionSpent });
     if (!prep.ok) {
       println(c.red(`  Refused: ${prep.reason}`) + "\n");
       if (SCRIPTED) hadFailure = true;
       return true;
     }
     resolved = prep.recipient;
-    // Policy runs on the resolved recipient, before anything is shown, so it
-    // covers every write action: the allowlist applies to token transfers too,
-    // while the MON amount limits only bind native sends.
-    const verdict = checkPolicy(policy, {
-      to: resolved.address,
-      value: action.action === "send_mon" ? parseMon(action.amountMon) : null,
-      sessionSpent,
-    });
-    if (!verdict.ok) {
-      println(c.red(`  Refused: policy ${verdict.rule}: ${verdict.message}`) + "\n");
-      if (SCRIPTED) hadFailure = true;
-      return true;
-    }
     if (action.action === "send_mon") {
       let preview;
       try {

@@ -50,8 +50,12 @@ the wallet enforces it before every confirmation prompt:
 - `allowlist` restricts recipients; addresses are checksummed at load, so a typo fails at startup
   rather than silently blocking a send later.
 
+The recipient rule binds **every write action**: a name or an address outside the allowlist is
+refused for token transfers as well as native sends. The MON amount limits apply to native sends,
+the only amounts denominated in MON.
+
 Every field is optional and **no file means no policy**, so behavior is unchanged unless you opt
-in. A violation is refused in the same pre-prompt stage as a bad checksum, naming the rule
+in. A violation is refused at the single resolve point, alongside the recipient check, naming the rule
 (`policy maxPerSend: amount 0.9 MON is above the policy limit of 0.5 MON per send.`), and the
 confirmation block gains a `Policy:` line showing what applied. A malformed policy file stops the
 agent at startup instead of being ignored.

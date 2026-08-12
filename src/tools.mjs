@@ -12,7 +12,7 @@ import { config } from "./config.mjs";
 import { parseMon, formatMon, formatTokenUnits, parseTokenAmount, isAddress } from "./format.mjs";
 import { listKnownTokenSymbols, resolveToken } from "./tokens.mjs";
 import { resolveRecipient, formatRecipient } from "./addressBook.mjs";
-import { describePolicy } from "./policy.mjs";
+import { checkPolicy, describePolicy } from "./policy.mjs";
 
 export const ACTIONS = {
   get_address: { args: [], desc: "Show the agent's own wallet address." },
@@ -106,10 +106,20 @@ export function parseAction(text) {
  * Callers refuse before prompting: asking someone to confirm a transfer that is already
  * going to be declined teaches them the prompt is a formality.
  */
-export function resolveSend(a) {
+export function resolveSend(a, { policy = null, sessionSpent = 0n } = {}) {
   if (!isWrite(a.action)) return { ok: true, recipient: null };
   const r = resolveRecipient(a.to);
   if (!r.ok) return { ok: false, reason: r.reason };
+  // The spend policy is checked here, on the resolved address, so every write
+  // action passes through it: the allowlist binds token transfers as well as
+  // native sends, while the MON amount limits only apply to amounts actually
+  // denominated in MON (a token amount arrives as null and skips them).
+  const verdict = checkPolicy(policy, {
+    to: r.address,
+    value: a.action === "send_mon" ? parseMon(a.amountMon) : null,
+    sessionSpent,
+  });
+  if (!verdict.ok) return { ok: false, reason: `policy ${verdict.rule}: ${verdict.message}` };
   return { ok: true, recipient: r };
 }
 
