@@ -46,7 +46,8 @@ the wallet enforces it before every confirmation prompt:
 ```
 
 - `maxPerSend` refuses any single send above the amount, in MON.
-- `maxPerSession` is a running total for the process lifetime.
+- `maxPerSession` is a running total for the process lifetime. A dry-run send counts against it,
+  since the budget bounds what the agent attempts; a refused send does not.
 - `allowlist` restricts recipients; addresses are checksummed at load, so a typo fails at startup
   rather than silently blocking a send later.
 

@@ -234,8 +234,12 @@ async function handleAction(action) {
   try {
     const out = await runAction(action, resolved);
     // Only native amounts count against the session budget; token amounts are
-    // not denominated in MON, so the policy governs their recipient only.
-    if (action.action === "send_mon" && resolved) sessionSpent += parseMon(action.amountMon);
+    // not denominated in MON, so the policy governs their recipient only. A
+    // refusal from runAction must not consume budget, and a dry run does count:
+    // the budget bounds what the agent attempts, not only what settles.
+    if (action.action === "send_mon" && resolved && !String(out ?? "").startsWith("Refused:")) {
+      sessionSpent += parseMon(action.amountMon);
+    }
     if (out != null) console.log("  " + c.cyan(out.replace(/\n/g, "\n  ")) + "\n");
   } catch (err) {
     console.log(c.red(`  error: ${err.message}`) + "\n");
