@@ -10,7 +10,7 @@
  */
 
 import { Contract, JsonRpcProvider, getAddress as checksumAddress, Interface, ZeroAddress } from "ethers";
-import { config } from "./config.mjs";
+import { config, setAccountIndex } from "./config.mjs";
 
 let manager = null;
 let account = null;
@@ -57,8 +57,8 @@ function buildWalletConfig() {
 }
 
 export function validateAccountIndex(idx) {
-  if (!Number.isInteger(idx) || idx < 0) {
-    throw new Error(`WDK_ACCOUNT_INDEX must be a non-negative integer, got: ${idx}`);
+  if (!Number.isInteger(idx) || idx < 0 || idx > 999) {
+    throw new Error(`WDK_ACCOUNT_INDEX must be a non-negative integer <= 999, got: ${idx}`);
   }
 }
 
@@ -70,7 +70,7 @@ export async function initWallet() {
   const { default: WalletManagerEvmErc4337 } = await import("@tetherto/wdk-wallet-evm-erc-4337");
   manager = new WalletManagerEvmErc4337(config.seed, buildWalletConfig());
   // Start at config.accountIndex (default 0 = v0 behavior).
-  account = await manager.getAccount(config.accountIndex);
+  account = await manager.getAccount(config.accountIndexLive);
   accountIndex = config.accountIndex;
   address = await account.getAddress();
   return address;
@@ -93,10 +93,11 @@ export function getActiveAccountIndex() {
 export async function switchAccount(index) {
   if (!manager) throw new Error("Wallet not initialized");
   const i = Number(index);
-  if (!Number.isInteger(i) || i < 0) throw new Error(`Invalid account index: ${index}`);
+  if (!Number.isInteger(i) || i < 0 || i > 999) throw new Error(`Invalid account index: ${index}`);
   account = await manager.getAccount(i);
-  accountIndex = i;
   address = await account.getAddress();
+  accountIndex = i;
+  setAccountIndex(i);
   return address;
 }
 
@@ -220,4 +221,5 @@ export function dispose() {
     /* ignore */
   }
   manager = account = address = readProvider = null;
+  accountIndex = null;
 }

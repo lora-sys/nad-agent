@@ -112,6 +112,7 @@ export function parseAction(text) {
  */
 export function resolveSend(a, { policy = null, sessionSpent = 0n } = {}) {
   if (!isWrite(a.action)) return { ok: true, recipient: null };
+  if (a.action === "account") return { ok: true, recipient: null };
   const r = resolveRecipient(a.to);
   if (!r.ok) return { ok: false, reason: r.reason };
   // The spend policy is checked here, on the resolved address, so every write
@@ -133,7 +134,7 @@ export function resolveSend(a, { policy = null, sessionSpent = 0n } = {}) {
 
 /** True if the action mutates chain state and should require confirmation. */
 export function isWrite(action) {
-  return action === "send_mon" || action === "send_token";
+  return action === "send_mon" || action === "send_token" || action === "account";
 }
 
 /** Human-readable preview of what an action will do (shown before confirmation). */
@@ -146,8 +147,10 @@ export function describeAction(a, resolved) {
     case "get_token_balance":
       return `Read: your ${a.token ?? a.symbol ?? a.tokenAddress ?? "token"} token balance`;
     case "account": {
-      if (a.index !== undefined && a.index !== null && a.index !== "") {
-        return `Switch to account #${a.index}`;
+      const raw = a.index ?? "";
+      const i = raw !== "" ? Number(raw) : null;
+      if (i !== null && Number.isInteger(i) && i >= 0) {
+        return `Switch to account #${i}`;
       }
       return "Read: list derived accounts";
     }
@@ -292,7 +295,7 @@ export async function runAction(a, resolved) {
         ? Number(a.index)
         : null;
       if (i !== null) {
-        if (!Number.isInteger(i) || i < 0) return `Refused: "${a.index}" is not a valid account index.`;
+        if (!Number.isInteger(i) || i < 0 || i > 999) return `Refused: "${a.index}" is not a valid account index.`;
         const newAddr = await wallet.switchAccount(i);
         return `Switched to account #${i}\n  address: ${newAddr}`;
       }

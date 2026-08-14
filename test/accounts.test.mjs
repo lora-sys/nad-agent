@@ -8,11 +8,17 @@
  * Uses node:test + node:assert. Zero new dependencies.
  */
 
-import { describe, it, test } from "node:test";
+import { describe, it, test, after } from "node:test";
 import assert from "node:assert/strict";
-import { config } from "../src/config.mjs";
+import { config, getAccountIndex, setAccountIndex } from "../src/config.mjs";
 import { ACTIONS, parseAction, describeAction, systemPrompt, runAction } from "../src/tools.mjs";
 import { validateAccountIndex } from "../src/wallet.mjs";
+import { homedir } from "node:os";
+import { join } from "node:path";
+import { execSync } from "node:child_process";
+
+const STATE_DIR = join(homedir(), ".nad-agent");
+const STATE_PATH = join(STATE_DIR, "state.json");
 
 // ---------------------------------------------------------------------------
 // config.accountIndex
@@ -154,7 +160,12 @@ describe("runAction — account", () => {
   it("account list throws when wallet is not initialized", async () => {
     let threw = false;
     try {
-      await runAction({ action: "account" });
+      // Pass a resolved recipient to satisfy the isWrite guard; listAccounts
+      // should then throw "Wallet not initialized" from wallet.mjs.
+      await runAction(
+        { action: "account" },
+        { ok: true, address: "0x1111111111111111111111111111111111111111", name: null },
+      );
     } catch (e) {
       threw = true;
       assert.ok(String(e.message).toLowerCase().includes("not initialized"));
@@ -184,4 +195,43 @@ describe("ACTIONS — required keys still present", () => {
       assert.ok(key in ACTIONS, `missing ${key} in ACTIONS`);
     });
   }
+});
+
+// ---------------------------------------------------------------------------
+// Persistence: setAccountIndex writes to ~/.nad-agent/state.json
+// ---------------------------------------------------------------------------
+
+describe("persistence — setAccountIndex", () => {
+  const originalIndex = getAccountIndex();
+
+  after(async () => {
+    // Restore the original index
+    await setAccountIndex(originalIndex);
+  });
+
+  it("writes account index to ~/.nad-agent/state.json", async () => {
+    await setAccountIndex(3);
+    const { readFileSync } = await import("node:fs");
+    const content = JSON.parse(readFileSync(STATE_PATH, "utf8"));
+    assert.equal(content.accountIndex, 3);
+  });
+
+  it("creates the parent directory if missing", async () => {
+    // mkdirSync with recursive:true should handle a fresh directory
+    await setAccountIndex(5);
+    const content = JSON.parse(
+      (await import("node:fs")).readFileSync(STATE_PATH, "utf8"),
+    );
+    assert.equal(content.accountIndex, 5);
+  });
+
+  it("round-trips across a fresh module import", async () => {
+    // Spawn a child process that imports config and returns getAccountIndex()
+    await setAccountIndex(7);
+    const result = execSync(
+      `node --input-type=module -e 'import { getAccountIndex } from "./src/config.mjs"; console.log(getAccountIndex())'`,
+      { cwd: process.cwd(), encoding: "utf8" },
+    ).trim();
+    assert.equal(result, "7", "fresh process should read persisted index");
+  });
 });

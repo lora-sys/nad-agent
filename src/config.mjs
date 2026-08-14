@@ -8,6 +8,10 @@
  * at a Monad RPC + chainId — values from docs.monad.xyz.
  */
 
+import { readFileSync, writeFileSync, mkdirSync, renameSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
+
 const NETWORKS = {
   testnet: {
     chainId: 10143,
@@ -42,6 +46,44 @@ if (gasOverride === "dry-run" || !pimlicoKey) gasMode = "dry-run";
 else if (gasOverride === "native") gasMode = "native";
 else gasMode = "sponsored";
 
+const _home = homedir();
+if (!_home) throw new Error("Cannot determine home directory — set HOME env var");
+const STATE_DIR = join(_home, ".nad-agent");
+const STATE_PATH = join(STATE_DIR, "state.json");
+
+function readState() {
+  try {
+    return JSON.parse(readFileSync(STATE_PATH, "utf8"));
+  } catch {
+    return {};
+  }
+}
+
+function writeState(obj) {
+  mkdirSync(STATE_DIR, { recursive: true });
+  const tmp = STATE_PATH + ".tmp";
+  const payload = JSON.stringify(obj, null, 2);
+  writeFileSync(tmp, payload);
+  renameSync(tmp, STATE_PATH); // atomic on POSIX
+}
+
+// Start from env (default 0), then let the persisted state override it.
+let _accountIndex = Number(process.env.WDK_ACCOUNT_INDEX || 0);
+try {
+  const saved = readState().accountIndex;
+  if (Number.isInteger(saved) && saved >= 0) _accountIndex = saved;
+} catch { /* ignore */ }
+
+export function getAccountIndex() {
+  return _accountIndex;
+}
+
+export function setAccountIndex(idx) {
+  if (!Number.isInteger(idx) || idx < 0 || idx > 999) return;
+  writeState({ accountIndex: idx });
+  _accountIndex = idx;
+}
+
 export const config = {
   chain,
   // Convenience flag for guardrails: mainnet moves real funds.
@@ -54,8 +96,11 @@ export const config = {
   bundlerUrl: pimlicoKey
     ? `https://api.pimlico.io/v2/${chain.chainId}/rpc?apikey=${pimlicoKey}`
     : "",
-  // Which derived account to use (BIP-44 index). Default 0 keeps v0 behavior.
-  accountIndex: Number(process.env.WDK_ACCOUNT_INDEX || 0),
+  // Which derived account to use (BIP-44 index). Backed by the live _accountIndex
+  // so callers always see the current persisted value — not a stale snapshot from
+  // module-load time. Default 0 keeps v0 behavior.
+  accountIndex: _accountIndex,
+  get accountIndexLive() { return _accountIndex; },
   seed: process.env.WDK_SEED || "",
   model: {
     name: process.env.QVAC_MODEL || "QWEN3_8B_INST_Q4_K_M",
