@@ -16,7 +16,7 @@ import { validateAccountIndex } from "../src/wallet.mjs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execSync } from "node:child_process";
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync, rmSync, unlinkSync } from "node:fs";
 
 // Use an isolated temp directory so tests never touch ~/.nad-agent/state.json.
 const TEST_STATE_DIR = join(tmpdir(), `nad-agent-test-${process.pid}`);
@@ -201,6 +201,16 @@ describe("runAction — account", () => {
     const res = await runAction({ action: "account", index: "abc" });
     assert.match(String(res), /refused/i);
   });
+
+  it("account switch with boolean index returns refusal", async () => {
+    const res = await runAction({ action: "account", index: true });
+    assert.match(String(res), /refused/i);
+  });
+
+  it("account switch with false index returns refusal", async () => {
+    const res = await runAction({ action: "account", index: false });
+    assert.match(String(res), /refused/i);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -293,5 +303,27 @@ describe("persistence — setAccountIndex", () => {
     const { readFileSync } = await import("node:fs");
     const content = JSON.parse(readFileSync(TEST_STATE_PATH, "utf8"));
     assert.equal(content.accountIndex, 3, "out-of-range index should be ignored");
+  });
+
+  it("does not update in-memory state when disk write fails", async () => {
+    // Create a regular file where the state directory should be — mkdirSync
+    // will fail with ENOTDIR, simulating a disk/permission failure.
+    const blockerPath = join(TEST_STATE_DIR, "blocker");
+    const { writeFileSync, unlinkSync } = await import("node:fs");
+    writeFileSync(blockerPath, "x");
+    const badPath = join(blockerPath, "state.json");
+    const saved = process.env.NAD_STATE_PATH;
+    process.env.NAD_STATE_PATH = badPath;
+    const before = getAccountIndex();
+    let threw = false;
+    try {
+      await setAccountIndex(5);
+    } catch {
+      threw = true;
+    }
+    assert.ok(threw, "write failure should propagate");
+    assert.equal(getAccountIndex(), before, "in-memory index must not change when disk write fails");
+    process.env.NAD_STATE_PATH = saved;
+    try { unlinkSync(blockerPath); } catch { /* ignore */ }
   });
 });

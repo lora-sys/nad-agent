@@ -136,6 +136,22 @@ export function isWrite(action) {
   return action === "send_mon" || action === "send_token";
 }
 
+/** Parse an account index from model output or CLI input.
+ *  Accepts: integer number, or decimal string that parses to one.
+ *  Rejects: booleans, null, undefined, objects, floats, out-of-range. */
+function parseAccountIndex(raw) {
+  if (typeof raw === "number") {
+    return Number.isInteger(raw) && raw >= 0 && raw <= 999 ? raw : null;
+  }
+  if (typeof raw === "string") {
+    const trimmed = raw.trim();
+    if (trimmed === "") return null;
+    const n = Number(trimmed);
+    return Number.isInteger(n) && n >= 0 && n <= 999 ? n : null;
+  }
+  return null; // boolean, null, object, etc.
+}
+
 /** Human-readable preview of what an action will do (shown before confirmation). */
 export function describeAction(a, resolved) {
   switch (a.action) {
@@ -146,9 +162,8 @@ export function describeAction(a, resolved) {
     case "get_token_balance":
       return `Read: your ${a.token ?? a.symbol ?? a.tokenAddress ?? "token"} token balance`;
     case "account": {
-      const raw = a.index ?? "";
-      const i = raw !== "" ? Number(raw) : null;
-      if (i !== null && Number.isInteger(i) && i >= 0 && i <= 999) {
+      const i = parseAccountIndex(a.index);
+      if (i !== null) {
         return `Switch to account #${i}`;
       }
       return "Read: list derived accounts";
@@ -290,11 +305,10 @@ export async function runAction(a, resolved) {
     }
 
     case "account": {
-      const i = a.index !== undefined && a.index !== null && a.index !== ""
-        ? Number(a.index)
-        : null;
-      if (i !== null) {
-        if (!Number.isInteger(i) || i < 0 || i > 999) return `Refused: "${a.index}" is not a valid account index.`;
+      const hasIndex = a.index !== undefined && a.index !== null && a.index !== "";
+      if (hasIndex) {
+        const i = parseAccountIndex(a.index);
+        if (i === null) return `Refused: "${a.index}" is not a valid account index.`;
         const newAddr = await wallet.switchAccount(i);
         return `Switched to account #${i}\n  address: ${newAddr}`;
       }
