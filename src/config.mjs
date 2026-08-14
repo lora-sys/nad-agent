@@ -48,23 +48,38 @@ else gasMode = "sponsored";
 
 const _home = homedir();
 if (!_home) throw new Error("Cannot determine home directory — set HOME env var");
-const STATE_DIR = join(_home, ".nad-agent");
-const STATE_PATH = join(STATE_DIR, "state.json");
+
+function getStatePath() {
+  // NAD_STATE_PATH lets tests (and power users) redirect state to any file.
+  // Evaluated at call time so test setup that sets the env var after import
+  // is respected.
+  const override = process.env.NAD_STATE_PATH;
+  if (override) return override;
+  const dir = join(_home, ".nad-agent");
+  return join(dir, "state.json");
+}
 
 function readState() {
+  const path = getStatePath();
   try {
-    return JSON.parse(readFileSync(STATE_PATH, "utf8"));
-  } catch {
+    return JSON.parse(readFileSync(path, "utf8"));
+  } catch (err) {
+    if (err.code === "ENOENT") return {};
+    console.error(`[nad-agent] warning: could not read state at ${path}: ${err.message}`);
     return {};
   }
 }
 
 function writeState(obj) {
-  mkdirSync(STATE_DIR, { recursive: true });
-  const tmp = STATE_PATH + ".tmp";
-  const payload = JSON.stringify(obj, null, 2);
-  writeFileSync(tmp, payload);
-  renameSync(tmp, STATE_PATH); // atomic on POSIX
+  const path = getStatePath();
+  const dir = path.slice(0, path.lastIndexOf("/"));
+  mkdirSync(dir, { recursive: true });
+  // Read-modify-write: merge with existing state so future keys aren't lost.
+  const existing = readState();
+  const merged = { ...existing, ...obj };
+  const tmp = path + ".tmp";
+  writeFileSync(tmp, JSON.stringify(merged, null, 2));
+  renameSync(tmp, path); // atomic on POSIX
 }
 
 // Start from env (default 0), then let the persisted state override it.
@@ -96,11 +111,10 @@ export const config = {
   bundlerUrl: pimlicoKey
     ? `https://api.pimlico.io/v2/${chain.chainId}/rpc?apikey=${pimlicoKey}`
     : "",
-  // Which derived account to use (BIP-44 index). Backed by the live _accountIndex
-  // so callers always see the current persisted value — not a stale snapshot from
-  // module-load time. Default 0 keeps v0 behavior.
-  accountIndex: _accountIndex,
-  get accountIndexLive() { return _accountIndex; },
+  // Which derived account to use (BIP-44 index). This is a LIVE getter backed by
+  // _accountIndex — not a snapshot from module-load time — so initWallet always
+  // picks up the persisted value. Default 0 keeps v0 behavior.
+  get accountIndex() { return _accountIndex; },
   seed: process.env.WDK_SEED || "",
   model: {
     name: process.env.QVAC_MODEL || "QWEN3_8B_INST_Q4_K_M",
