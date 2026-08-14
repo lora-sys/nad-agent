@@ -42,6 +42,12 @@ export function loadPolicy(path = process.env.NAD_POLICY || DEFAULT_PATH) {
     throw new Error(`policy file ${path} must contain a JSON object`);
   }
 
+  const KNOWN_KEYS = new Set(["maxPerSend", "maxPerSession", "allowlist"]);
+  const unknown = Object.keys(parsed).filter((k) => !KNOWN_KEYS.has(k));
+  if (unknown.length) {
+    throw new Error(`policy file ${path} contains unknown key${unknown.length > 1 ? "s" : ""}: ${unknown.join(", ")}`);
+  }
+
   const policy = { path, maxPerSend: null, maxPerSession: null, allowlist: null };
 
   for (const key of ["maxPerSend", "maxPerSession"]) {
@@ -92,7 +98,8 @@ export function checkPolicy(policy, { to, value, sessionSpent = 0n }) {
   if (!hasRules(policy)) return { ok: true };
   const symbol = "MON";
 
-  if (policy.allowlist && !policy.allowlist.includes(to)) {
+  const lower = to.toLowerCase();
+  if (policy.allowlist && !policy.allowlist.some((a) => a.toLowerCase() === lower)) {
     return {
       ok: false,
       rule: "allowlist",

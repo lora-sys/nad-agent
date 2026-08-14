@@ -40,6 +40,11 @@ describe("loadPolicy", () => {
   test("rejects a non-positive limit", () => {
     assert.throws(() => loadPolicy(policyFile({ maxPerSend: "0" })), /greater than zero/);
   });
+
+  test("rejects unknown keys so a typo cannot silently disable enforcement", () => {
+    assert.throws(() => loadPolicy(policyFile({ max_per_send: "1" })), /unknown key.*max_per_send/);
+    assert.throws(() => loadPolicy(policyFile({ allowList: ["0x" + "a".repeat(40)] })), /unknown key.*allowList/);
+  });
 });
 
 describe("checkPolicy", () => {
@@ -79,6 +84,11 @@ describe("checkPolicy", () => {
     const v = checkPolicy(rules, { to: BOB, value: null });
     assert.equal(v.ok, false);
     assert.equal(v.rule, "allowlist");
+  });
+
+  test("a lowercase recipient matches its checksummed allowlist entry", () => {
+    const v = checkPolicy(rules, { to: ALICE.toLowerCase(), value: parseMon("0.1") });
+    assert.equal(v.ok, true);
   });
 
   test("a token send to an allowlisted recipient passes, ignoring the MON limits", () => {
