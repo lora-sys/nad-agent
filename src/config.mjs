@@ -10,7 +10,7 @@
 
 import { readFileSync, writeFileSync, mkdirSync, renameSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { join, dirname } from "node:path";
 
 const NETWORKS = {
   testnet: {
@@ -72,8 +72,7 @@ function readState() {
 
 function writeState(obj) {
   const path = getStatePath();
-  const dir = path.slice(0, path.lastIndexOf("/"));
-  mkdirSync(dir, { recursive: true });
+  mkdirSync(dirname(path), { recursive: true });
   // Read-modify-write: merge with existing state so future keys aren't lost.
   const existing = readState();
   const merged = { ...existing, ...obj };
@@ -86,7 +85,7 @@ function writeState(obj) {
 let _accountIndex = Number(process.env.WDK_ACCOUNT_INDEX || 0);
 try {
   const saved = readState().accountIndex;
-  if (Number.isInteger(saved) && saved >= 0) _accountIndex = saved;
+  if (Number.isInteger(saved) && saved >= 0 && saved <= 999) _accountIndex = saved;
 } catch { /* ignore */ }
 
 export function getAccountIndex() {

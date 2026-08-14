@@ -231,6 +231,19 @@ async function handleAction(action) {
       return true;
     }
   }
+  // Account switch requires explicit confirmation (no on-chain recipient to resolve,
+  // but the active account IS global mutable state — the operator must approve).
+  if (action.action === "account" && action.index !== undefined && action.index !== null && action.index !== "") {
+    println("\n  " + c.yellow(describeAction(action)));
+    if (!(await confirmMainnetOnce())) {
+      println(c.dim("  cancelled.") + "\n");
+      return true;
+    }
+    if (!(await confirm("  confirm?"))) {
+      println(c.dim("  cancelled.") + "\n");
+      return true;
+    }
+  }
   try {
     const out = await runAction(action, resolved);
     // Only native amounts count against the session budget; token amounts are

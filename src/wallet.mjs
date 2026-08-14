@@ -70,7 +70,7 @@ export async function initWallet() {
   const { default: WalletManagerEvmErc4337 } = await import("@tetherto/wdk-wallet-evm-erc-4337");
   manager = new WalletManagerEvmErc4337(config.seed, buildWalletConfig());
   // Start at config.accountIndex (default 0 = v0 behavior).
-  account = await manager.getAccount(config.accountIndexLive);
+  account = await manager.getAccount(config.accountIndex);
   accountIndex = config.accountIndex;
   address = await account.getAddress();
   return address;

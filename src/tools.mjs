@@ -112,7 +112,6 @@ export function parseAction(text) {
  */
 export function resolveSend(a, { policy = null, sessionSpent = 0n } = {}) {
   if (!isWrite(a.action)) return { ok: true, recipient: null };
-  if (a.action === "account") return { ok: true, recipient: null };
   const r = resolveRecipient(a.to);
   if (!r.ok) return { ok: false, reason: r.reason };
   // The spend policy is checked here, on the resolved address, so every write
@@ -134,7 +133,7 @@ export function resolveSend(a, { policy = null, sessionSpent = 0n } = {}) {
 
 /** True if the action mutates chain state and should require confirmation. */
 export function isWrite(action) {
-  return action === "send_mon" || action === "send_token" || action === "account";
+  return action === "send_mon" || action === "send_token";
 }
 
 /** Human-readable preview of what an action will do (shown before confirmation). */
@@ -149,7 +148,7 @@ export function describeAction(a, resolved) {
     case "account": {
       const raw = a.index ?? "";
       const i = raw !== "" ? Number(raw) : null;
-      if (i !== null && Number.isInteger(i) && i >= 0) {
+      if (i !== null && Number.isInteger(i) && i >= 0 && i <= 999) {
         return `Switch to account #${i}`;
       }
       return "Read: list derived accounts";
