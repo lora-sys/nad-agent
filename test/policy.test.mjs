@@ -149,4 +149,10 @@ describe("resolveSend enforces the policy on every write action", () => {
     assert.equal(resolveSend({ action: "send_token", to: BOB, token: "USDC", amount: "5" }).ok, true);
     assert.equal(resolveSend({ action: "send_mon", to: BOB, amountMon: "99" }).ok, true);
   });
+
+  test("an invalid amount is refused, not thrown, even without a policy", () => {
+    const r = resolveSend({ action: "send_mon", to: BOB, amountMon: "nope" });
+    assert.equal(r.ok, false);
+    assert.match(r.reason, /invalid amount/);
+  });
 });
