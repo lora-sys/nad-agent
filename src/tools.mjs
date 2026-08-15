@@ -153,7 +153,7 @@ export function isWrite(action) {
  *  Rejects: booleans, null, undefined, objects, floats with fractional parts,
  *  out-of-range values. Values > 0 that have no fractional part (e.g. 3.0,
  *  which is a float literal but represents an integer) are accepted. */
-function parseAccountIndex(raw) {
+export function parseAccountIndex(raw) {
   if (typeof raw === "number") {
     if (!Number.isInteger(raw) || raw < 0 || raw > 999) return null;
     return raw || 0; // normalize -0 to 0
