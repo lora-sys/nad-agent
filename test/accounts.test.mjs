@@ -16,7 +16,7 @@ import { validateAccountIndex } from "../src/wallet.mjs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execSync } from "node:child_process";
-import { mkdirSync, rmSync, unlinkSync } from "node:fs";
+import { mkdirSync, rmSync } from "node:fs";
 
 // Use an isolated temp directory so tests never touch ~/.nad-agent/state.json.
 const TEST_STATE_DIR = join(tmpdir(), `nad-agent-test-${process.pid}`);
@@ -306,12 +306,10 @@ describe("persistence — setAccountIndex", () => {
   });
 
   it("does not update in-memory state when disk write fails", async () => {
-    // Create a regular file where the state directory should be — mkdirSync
-    // will fail with ENOTDIR, simulating a disk/permission failure.
-    const blockerPath = join(TEST_STATE_DIR, "blocker");
-    const { writeFileSync, unlinkSync } = await import("node:fs");
-    writeFileSync(blockerPath, "x");
-    const badPath = join(blockerPath, "state.json");
+    const blockerDir = join(TEST_STATE_DIR, "test-blocker-write");
+    const { writeFileSync } = await import("node:fs");
+    writeFileSync(blockerDir, "x");
+    const badPath = join(blockerDir, "state.json");
     const saved = process.env.NAD_STATE_PATH;
     process.env.NAD_STATE_PATH = badPath;
     const before = getAccountIndex();
@@ -324,6 +322,5 @@ describe("persistence — setAccountIndex", () => {
     assert.ok(threw, "write failure should propagate");
     assert.equal(getAccountIndex(), before, "in-memory index must not change when disk write fails");
     process.env.NAD_STATE_PATH = saved;
-    try { unlinkSync(blockerPath); } catch { /* ignore */ }
   });
 });

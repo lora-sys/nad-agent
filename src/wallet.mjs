@@ -94,11 +94,14 @@ export async function switchAccount(index) {
   if (!manager) throw new Error("Wallet not initialized");
   const i = Number(index);
   if (!Number.isInteger(i) || i < 0 || i > 999) throw new Error(`Invalid account index: ${index}`);
-  // Persist BEFORE switching in-memory state. If the disk write fails, the
-  // wallet stays on the current account — no divergence between runtime and disk.
+  // Derive the candidate account and resolve its address FIRST. If either step
+  // throws, the running wallet stays untouched — there is no half-switched state.
+  const candidate = await manager.getAccount(i);
+  const newAddress = await candidate.getAddress();
+  // Persist only after both derive and address resolution succeeded.
   setAccountIndex(i);
-  account = await manager.getAccount(i);
-  address = await account.getAddress();
+  account = candidate;
+  address = newAddress;
   accountIndex = i;
   return address;
 }
