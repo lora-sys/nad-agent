@@ -31,6 +31,38 @@ Talk to it in plain English (or use the slash-commands) and it drives a real wal
 
 It all runs **on-device**: the model never calls the cloud, and the wallet key never leaves the machine.
 
+## Spend policy (optional)
+
+Per-send confirmation covers what you can see; a policy covers what the agent could do while
+nobody is looking. Drop a `policy.json` next to `.env` (override the path with `NAD_POLICY`) and
+the wallet enforces it before every confirmation prompt:
+
+```json
+{
+  "maxPerSend": "0.5",
+  "maxPerSession": "1",
+  "allowlist": ["0x92936497B6ad2BA84b3f7Af22C9afF15f00b13B5"]
+}
+```
+
+- `maxPerSend` refuses any single send above the amount, in MON.
+- `maxPerSession` is a running total for the process lifetime. A dry-run send counts against it,
+  since the budget bounds what the agent attempts; a refused send does not.
+- `allowlist` restricts recipients; addresses are checksummed at load, so a typo fails at startup
+  rather than silently blocking a send later.
+
+The recipient rule binds **every write action**: a name or an address outside the allowlist is
+refused for token transfers as well as native sends. The MON amount limits apply to native sends,
+the only amounts denominated in MON.
+
+Every field is optional and **no file means no policy**, so behavior is unchanged unless you opt
+in. A violation is refused at the single resolve point, alongside the recipient check, naming the rule
+(`policy maxPerSend: amount 0.9 MON is above the policy limit of 0.5 MON per send.`), and the
+confirmation block gains a `Policy:` line showing what applied. A malformed policy file stops the
+agent at startup instead of being ignored.
+
+---
+
 **Scope (v0):** native MON sends plus read-only ERC-20 balance checks — `get_address`, `get_balance`, `get_token_balance`, `send`. No ERC-20 transfers, swaps, bridges, NFTs, or arbitrary contract calls yet; single account; testnet-first. It's a working proof-of-concept of a *local agentic wallet*, not a full DeFi suite — the [Upgrade path](#upgrade-path-bigger-agent) grows the toolset.
 
 ---
@@ -177,6 +209,7 @@ open a PR. Security bugs go through [SECURITY.md](./SECURITY.md), not public iss
 
 ```
 src/config.mjs       env → resolved config (the only machine-specific behavior)
+src/policy.mjs       optional spend policy: load, validate, enforce before the prompt
 src/wallet.mjs       WDK Safe ERC-4337 account on Monad (+ dry-run)
 src/agent.mjs        QVAC local model: load / stream / unload
 src/addressBook.mjs  recipient resolution: alias → address

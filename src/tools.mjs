@@ -12,6 +12,7 @@ import { config } from "./config.mjs";
 import { parseMon, formatMon, formatTokenUnits, parseTokenAmount, isAddress } from "./format.mjs";
 import { listKnownTokenSymbols, resolveToken } from "./tokens.mjs";
 import { resolveRecipient, formatRecipient } from "./addressBook.mjs";
+import { checkPolicy, describePolicy } from "./policy.mjs";
 
 export const ACTIONS = {
   get_address: { args: [], desc: "Show the agent's own wallet address." },
@@ -105,10 +106,24 @@ export function parseAction(text) {
  * Callers refuse before prompting: asking someone to confirm a transfer that is already
  * going to be declined teaches them the prompt is a formality.
  */
-export function resolveSend(a) {
+export function resolveSend(a, { policy = null, sessionSpent = 0n } = {}) {
   if (!isWrite(a.action)) return { ok: true, recipient: null };
   const r = resolveRecipient(a.to);
   if (!r.ok) return { ok: false, reason: r.reason };
+  // The spend policy is checked here, on the resolved address, so every write
+  // action passes through it: the allowlist binds token transfers as well as
+  // native sends, while the MON amount limits only apply to amounts actually
+  // denominated in MON (a token amount arrives as null and skips them).
+  let value = null;
+  if (a.action === "send_mon") {
+    try {
+      value = parseMon(a.amountMon);
+    } catch {
+      return { ok: false, reason: `invalid amount: "${a.amountMon}" is not a valid MON value` };
+    }
+  }
+  const verdict = checkPolicy(policy, { to: r.address, value, sessionSpent });
+  if (!verdict.ok) return { ok: false, reason: `policy ${verdict.rule}: ${verdict.message}` };
   return { ok: true, recipient: r };
 }
 
@@ -154,7 +169,7 @@ export function describeAction(a, resolved) {
  * from #42 can be mapped before this runs), reads the balance, and simulates
  * fee + post-send balance so the user sees the effect before approving.
  */
-export async function previewSend(a, to) {
+export async function previewSend(a, to, { policy = null, sessionSpent = 0n } = {}) {
   const value = parseMon(a.amountMon);
   const before = await wallet.getBalance();
   // Known follow-up: this compares against the amount alone; a native-gas send
@@ -180,7 +195,8 @@ export async function previewSend(a, to) {
     : config.gasMode === "dry-run" ? "dry-run (simulated, nothing broadcast)"
     : "you pay gas in " + SYMBOL();
   return { to, amountMon: a.amountMon, symbol: SYMBOL(), value, fee, simulated,
-           before, after, gasLabel, paysGas, insufficient, simError };
+           before, after, gasLabel, paysGas, insufficient, simError,
+           policyNote: describePolicy(policy, { value, sessionSpent }) };
 }
 
 /** Render the previewSend result as the confirmation block shown before y/N. */
@@ -193,6 +209,9 @@ export function renderSendPreview(p) {
   ];
   if (p.insufficient) {
     lines.push(`WARNING:  balance is below the amount — this send would revert.`);
+  }
+  if (p.policyNote) {
+    lines.push(`Policy:   ${p.policyNote}`);
   }
   if (p.simError && !p.insufficient) {
     lines.push(`WARNING:  simulation failed, this send may revert (${p.simError}).`);
