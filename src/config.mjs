@@ -66,7 +66,8 @@ function readState() {
   } catch (err) {
     if (err.code === "ENOENT") return {};
     console.error(`[nad-agent] warning: could not read state at ${path}: ${err.message}`);
-    return {};
+    // Propagate non-ENOENT errors so callers don't silently corrupt state.
+    throw err;
   }
 }
 
@@ -74,7 +75,16 @@ function writeState(obj) {
   const path = getStatePath();
   mkdirSync(dirname(path), { recursive: true });
   // Read-modify-write: merge with existing state so future keys aren't lost.
-  const existing = readState();
+  // If the existing file is corrupted (bad JSON), treat it as empty — we're
+  // about to write a fresh file anyway. But propagate real I/O errors (e.g.,
+  // permission denied) so we don't silently wipe state we couldn't read.
+  let existing = {};
+  try {
+    existing = readState();
+  } catch (err) {
+    if (err.code !== "ENOENT" && err.name !== "SyntaxError") throw err;
+    // ENOENT (no file yet) or SyntaxError (corrupted JSON) → start fresh.
+  }
   const merged = { ...existing, ...obj };
   const tmp = path + ".tmp";
   writeFileSync(tmp, JSON.stringify(merged, null, 2));
@@ -132,6 +142,7 @@ export function describeConfig() {
     `rpc:      ${config.chain.rpcUrl}`,
     `gas mode: ${config.gasMode}${config.gasMode === "dry-run" ? "  (sends are simulated — set PIMLICO_API_KEY to broadcast)" : ""}`,
     ...(config.isMainnet ? ["warning:  MAINNET — sends move real MON"] : []),
+    `account:  #${config.accountIndex}`,
     `model:    ${config.model.localPath || config.model.name}`,
   ].join("\n");
 }

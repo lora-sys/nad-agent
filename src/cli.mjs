@@ -74,6 +74,7 @@ import {
   previewSend,
   renderSendPreview,
   resolveSend,
+  parseAccountIndex,
 } from "./tools.mjs";
 
 // ── color (no deps) ─────────────────────────────────────────────────────────
@@ -234,6 +235,13 @@ async function handleAction(action) {
   // Account switch requires explicit confirmation (no on-chain recipient to resolve,
   // but the active account IS global mutable state — the operator must approve).
   if (action.action === "account" && action.index !== undefined && action.index !== null && action.index !== "") {
+    // Validate the index before showing confirmation: an invalid index should
+    // surface its refusal message, not a misleading "list accounts" description.
+    const validated = parseAccountIndex(action.index);
+    if (validated === null) {
+      println("\n  " + c.red(`Refused: "${action.index}" is not a valid account index.`) + "\n");
+      return true;
+    }
     println("\n  " + c.yellow(describeAction(action)));
     if (!(await confirmMainnetOnce())) {
       println(c.dim("  cancelled.") + "\n");
