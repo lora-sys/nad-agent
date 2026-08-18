@@ -63,7 +63,7 @@ import { parseMon } from "./format.mjs";
 import { loadPolicy, hasRules } from "./policy.mjs";
 import * as wallet from "./wallet.mjs";
 import * as brain from "./agent.mjs";
-import { addressBookWarnings, formatRecipient } from "./addressBook.mjs";
+import { addressBookWarnings, formatRecipient, safeEcho } from "./addressBook.mjs";
 import {
   ACTIONS,
   systemPrompt,
@@ -239,7 +239,9 @@ async function handleAction(action) {
     // surface its refusal message, not a misleading "list accounts" description.
     const validated = parseAccountIndex(action.index);
     if (validated === null) {
-      println("\n  " + c.red(`Refused: "${action.index}" is not a valid account index.`) + "\n");
+      const safe = safeEcho(action.index, 40);
+      println("\n  " + c.red(`Refused: "${safe}" is not a valid account index.`) + "\n");
+      if (SCRIPTED) hadFailure = true;
       return true;
     }
     println("\n  " + c.yellow(describeAction(action)));

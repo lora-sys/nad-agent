@@ -11,7 +11,7 @@ import * as wallet from "./wallet.mjs";
 import { config } from "./config.mjs";
 import { parseMon, formatMon, formatTokenUnits, parseTokenAmount, isAddress } from "./format.mjs";
 import { listKnownTokenSymbols, resolveToken } from "./tokens.mjs";
-import { resolveRecipient, formatRecipient } from "./addressBook.mjs";
+import { resolveRecipient, formatRecipient, safeEcho } from "./addressBook.mjs";
 import { checkPolicy, describePolicy } from "./policy.mjs";
 
 export const ACTIONS = {
@@ -324,7 +324,7 @@ export async function runAction(a, resolved) {
       const hasIndex = a.index !== undefined && a.index !== null && a.index !== "";
       if (hasIndex) {
         const i = parseAccountIndex(a.index);
-        if (i === null) return `Refused: "${a.index}" is not a valid account index.`;
+        if (i === null) return `Refused: "${safeEcho(a.index)}" is not a valid account index.`;
         const newAddr = await wallet.switchAccount(i);
         return `Switched to account #${i}\n  address: ${newAddr}`;
       }

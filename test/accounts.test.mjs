@@ -211,6 +211,17 @@ describe("runAction — account", () => {
     const res = await runAction({ action: "account", index: false });
     assert.match(String(res), /refused/i);
   });
+
+  it("refusal message sanitizes embedded control characters", async () => {
+    const res = await runAction({ action: "account", index: "\x1b[31mabc\x1b[0m" });
+    assert.match(String(res), /refused/i);
+    assert.ok(!res.includes("\x1b"), "refusal should not contain raw ANSI escape sequences");
+  });
+
+  it("rejects index as a floating-point string with fractional part", async () => {
+    const res = await runAction({ action: "account", index: "2.5" });
+    assert.match(String(res), /refused/i);
+  });
 });
 
 // ---------------------------------------------------------------------------
